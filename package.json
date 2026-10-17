@@ -1,0 +1,16 @@
+{
+  "name": "halloween-quest",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Eight illustrated Halloween quests with stable QR links",
+  "scripts": {
+    "build": "node scripts/package-site.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "cloudflare:login": "wrangler login --device",
+    "deploy:check": "npm run build && wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.5",
+    "wrangler": "^4.151.1"
+  }
+}

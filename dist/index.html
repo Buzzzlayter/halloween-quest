@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0712" />
+    <title>Хэллоуинский маршрут — проверка заданий</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body class="preview-page">
+    <script>
+      if (new URLSearchParams(window.location.search).has("id")) {
+        document.body.className = "task-page";
+      }
+    </script>
+    <main class="preview-shell">
+      <p class="preview-kicker">Панель проверки</p>
+      <h1>Хэллоуинский маршрут</h1>
+      <p class="preview-intro">
+        Восемь волшебных друзей и простые игры для всей команды от 3 лет.
+        Взрослый читает карточку, а дети вместе выполняют задание.
+      </p>
+
+      <div class="task-grid" id="task-list" aria-label="Список заданий"></div>
+    </main>
+
+    <main class="task-shell" id="task" aria-live="polite">
+      <section class="task-card">
+        <div class="animation-stage" id="animation" aria-hidden="true"></div>
+        <div class="task-copy">
+          <p class="task-kicker" id="task-kicker"></p>
+          <h1 id="task-title">Загрузка…</h1>
+          <p class="task-description" id="task-description"></p>
+          <h2 class="task-instruction" id="task-instruction">Задание для команды</h2>
+          <p class="task-text" id="task-text"></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="assets/tasks.js"></script>
+    <script>
+      const list = document.querySelector("#task-list");
+
+      window.HALLOWEEN_TASKS.forEach((task) => {
+        const link = document.createElement("a");
+        link.className = "task-link";
+        link.href = `?id=${encodeURIComponent(task.id)}`;
+        link.style.setProperty("--card-accent", task.accent);
+
+        if (task.image) {
+          const thumbnail = document.createElement("img");
+          thumbnail.className = "task-link__image";
+          thumbnail.src = task.image.replace(/^\.\.\//, "");
+          thumbnail.alt = "";
+          thumbnail.loading = "lazy";
+          thumbnail.width = 96;
+          thumbnail.height = 96;
+          link.append(thumbnail);
+          link.classList.add("task-link--illustrated");
+        }
+
+        const number = document.createElement("span");
+        number.className = "task-link__number";
+        number.textContent = String(task.id).padStart(2, "0");
+
+        const label = document.createElement("span");
+        label.className = "task-link__label";
+        label.textContent = task.title;
+
+        const arrow = document.createElement("span");
+        arrow.className = "task-link__arrow";
+        arrow.setAttribute("aria-hidden", "true");
+        arrow.textContent = "→";
+
+        link.append(number, label, arrow);
+        list.append(link);
+      });
+    </script>
+    <script src="assets/task-page.js"></script>
+  </body>
+</html>

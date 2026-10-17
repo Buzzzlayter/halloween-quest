@@ -1,0 +1,13 @@
+node_modules/
+.qr-tools/
+.wrangler/
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+*.log
+publish/
+qr-codes/
+qr-codes-*/
+halloween-*.zip
+__pycache__/

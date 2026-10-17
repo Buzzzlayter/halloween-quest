@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0712" />
+    <title>Задание</title>
+    <link rel="stylesheet" href="../assets/styles.css" />
+  </head>
+  <body class="task-page">
+    <main class="task-shell" id="task" aria-live="polite">
+      <section class="task-card">
+        <div class="animation-stage" id="animation" aria-hidden="true"></div>
+
+        <div class="task-copy">
+          <p class="task-kicker" id="task-kicker"></p>
+          <h1 id="task-title">Загрузка…</h1>
+          <p class="task-description" id="task-description"></p>
+          <h2 class="task-instruction" id="task-instruction">Задание для команды</h2>
+          <p class="task-text" id="task-text"></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="../assets/tasks.js"></script>
+    <script src="../assets/task-page.js"></script>
+  </body>
+</html>

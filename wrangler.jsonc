@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "halloween-quest",
+  "compatibility_date": "2026-10-17",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./publish"
+  }
+}
