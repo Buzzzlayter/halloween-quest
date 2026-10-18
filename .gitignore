@@ -11,3 +11,14 @@ qr-codes/
 qr-codes-*/
 halloween-*.zip
 __pycache__/
+media-review/
+tasks-backup-*.js
+
+# Local editor/OS caches and transient test output
+.DS_Store
+Thumbs.db
+desktop.ini
+.cache/
+coverage/
+*.tmp
+*.temp
