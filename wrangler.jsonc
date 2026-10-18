@@ -1,9 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "halloween-quest",
+  "main": "server/worker.mjs",
   "compatibility_date": "2026-10-17",
   "workers_dev": true,
   "assets": {
-    "directory": "./publish"
-  }
+    "directory": "./publish",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "QUEST_ROOMS", "class_name": "QuestRoom" }]
+  },
+  "migrations": [{ "tag": "quest-rooms-v1", "new_sqlite_classes": ["QuestRoom"] }]
 }

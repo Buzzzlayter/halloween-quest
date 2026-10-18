@@ -1,58 +1,95 @@
 (function () {
-  const params = new URLSearchParams(window.location.search);
   if (document.body.classList.contains("preview-page")) return;
-  const taskId = Number(params.get("id"));
   const tasks = Array.isArray(window.HALLOWEEN_TASKS) ? window.HALLOWEEN_TASKS : [];
-  const task = tasks.find((item) => item.id === taskId);
-
-  const shell = document.querySelector("#task");
-  const stage = document.querySelector("#animation");
-  const kicker = document.querySelector("#task-kicker");
-  const title = document.querySelector("#task-title");
-  const description = document.querySelector("#task-description");
-  const instruction = document.querySelector("#task-instruction");
-  const text = document.querySelector("#task-text");
-
+  const taskId = Number(new URLSearchParams(window.location.search).get("id"));
+  const task = tasks.find(item => item.id === taskId);
+  const get = id => document.querySelector("#" + id);
+  const stage = get("animation");
   if (!task) {
-    shell.classList.add("task-shell--missing");
-    stage.dataset.animation = "ghost";
-    stage.append(createAnimation("ghost"));
-    kicker.textContent = "Ошибка";
-    title.textContent = "Задание не найдено";
-    description.hidden = true;
-    instruction.hidden = true;
-    text.textContent = "Проверьте QR-код или адрес страницы.";
-    document.title = "Задание не найдено";
-    return;
+    get("task-title").textContent = "Образ не найден";
+    get("task-kicker").textContent = "Ой!";
+    get("task-prompt").textContent = "Проверьте QR-код или вернитесь на главную.";
+    document.title = "Образ не найден"; return;
+  }
+  document.documentElement.style.setProperty("--accent", task.accent);
+  get("task-kicker").textContent = `Этап ${tasks.indexOf(task) + 1} / ${tasks.length}`;
+  get("task-title").textContent = task.title;
+  get("task-story").textContent = task.description;
+  get("task-prompt").textContent = task.text;
+  document.title = task.title + " — Тайна погасшего фонаря";
+  const media = document.createElement("div");
+  media.className = "quest-media"; stage.append(media);
+  if (task.video) renderVideo(); else renderIllustration();
+
+  function assetUrl(value) {
+    return document.querySelector(".preview-shell") ? value.replace(/^\.\.\//, "") : value;
   }
 
-  document.documentElement.style.setProperty("--accent", task.accent);
-  kicker.textContent = task.kicker;
-  title.textContent = task.title;
-  description.textContent = task.description || "";
-  description.hidden = !task.description;
-  text.textContent = task.text;
-  document.title = `${task.kicker} — ${task.title}`;
+  function renderVideo() {
+    stage.classList.add("animation-stage--illustrated", "animation-stage--video");
+    stage.style.setProperty("--media-ratio", task.videoAspect || "1 / 1");
+    stage.removeAttribute("aria-hidden");
+    const video = document.createElement("video");
+    video.className = "task-video";
+    video.src = assetUrl(task.video);
+    const poster = task.videoPoster || task.image;
+    if (poster) video.poster = assetUrl(poster);
+    video.muted = false;
+    video.defaultMuted = false;
+    video.loop = true;
+    video.playsInline = true;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || false;
+    video.autoplay = !reducedMotion;
+    video.preload = reducedMotion ? "none" : "metadata";
+    video.setAttribute("aria-label", task.imageAlt || "Анимация к заданию");
 
-  if (task.image) {
+    const controls = document.createElement("div");
+    controls.className = "video-controls";
+    const play = document.createElement("button");
+    play.type = "button";
+    controls.append(play);
+    function updatePlayControl() {
+      play.innerHTML = video.paused
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+      const label = video.paused ? "Воспроизвести анимацию" : "Приостановить анимацию";
+      play.setAttribute("aria-label", label);
+      play.title = label;
+    }
+    updatePlayControl();
+    video.addEventListener("play", updatePlayControl);
+    video.addEventListener("pause", updatePlayControl);
+    play.addEventListener("click", () => {
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    });
+    video.addEventListener("error", () => {
+      stage.classList.remove("animation-stage--video");
+      stage.style.removeProperty("--media-ratio");
+      media.replaceChildren();
+      renderIllustration();
+    }, { once: true });
+    media.append(video, controls);
+    if (video.autoplay) video.play().catch(() => {});
+  }
+
+  function renderIllustration() {
+    if (task.image) {
     stage.classList.add("animation-stage--illustrated");
     stage.dataset.motion = task.motion || "float";
     const image = document.createElement("img");
     image.className = "task-image";
-    image.src = document.querySelector(".preview-shell")
-      ? task.image.replace(/^\.\.\//, "")
-      : task.image;
+    image.src = assetUrl(task.image);
     image.alt = task.imageAlt || "Иллюстрация к заданию";
     image.width = 1024;
     image.height = 1024;
     image.decoding = "async";
     image.addEventListener("error", () => {
       stage.classList.remove("animation-stage--illustrated");
-      stage.setAttribute("aria-hidden", "true");
-      stage.replaceChildren(createAnimation(task.animation));
+      media.replaceChildren(createAnimation(task.animation));
     }, { once: true });
     stage.removeAttribute("aria-hidden");
-    stage.append(image);
+    media.append(image);
     const atmosphere = document.createElement("div");
     atmosphere.className = "illustration-atmosphere";
     atmosphere.setAttribute("aria-hidden", "true");
@@ -61,15 +98,17 @@
       spark.style.setProperty("--i", i);
       atmosphere.append(spark);
     }
-    stage.append(atmosphere);
+    media.append(atmosphere);
   } else {
     stage.dataset.animation = task.animation;
-    stage.append(createAnimation(task.animation));
+    media.append(createAnimation(task.animation));
+  }
   }
 
   function createAnimation(type) {
     const scene = document.createElement("div");
     scene.className = `scene scene--${type}`;
+    scene.setAttribute("aria-hidden", "true");
 
     if (type === "ghost") {
       scene.innerHTML = '<span class="ghost"><i></i><b></b></span><span class="spark spark--one"></span><span class="spark spark--two"></span>';
