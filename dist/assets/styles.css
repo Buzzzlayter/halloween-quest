@@ -705,6 +705,23 @@ button.room-roster-team { cursor: pointer; }
 .room-roster-team > span { font-size: 1.7rem; }
 .room-roster-team small { font-size: .7rem; }
 .room-roster-team strong { font-size: .9rem; }
+.room-roster-team .team-score { font-size: clamp(1.2rem,5vw,1.8rem); color: #ffe1a8; font-variant-numeric: tabular-nums; }
+.room-roster-team[aria-current="true"] { border-color: var(--team-accent); background: color-mix(in srgb,var(--team-accent) 12%,#21162d); }
+.team-readiness { color: var(--muted); }
+.score-total { margin: 10px 0; text-align: center; font-size: .8rem; line-height: 1.5; color: #dfc59e; }
+.score-history { font-size: .8rem; color: var(--muted); margin: 14px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.score-history summary { cursor: pointer; }
+.score-history-entry { line-height: 1.5; margin: 10px 0; }
+.room-reward { position: fixed; bottom: max(14px,env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 12; width: min(680px,calc(100% - 28px)); padding: 16px; border: 1px solid #ffdb8d; border-radius: 20px; background: linear-gradient(135deg,#473126f5,#2c1946fa); box-shadow: 0 8px 50px #0009,0 0 25px #ffb84d44; pointer-events: none; }
+.reward-title { display: block; color: #ffe3a4; font-size: 1.4rem; }
+.reward-reason { font-size: .85rem; line-height: 1.5; color: #fff0d8; margin: 7px 0; }
+.reward-teams { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.reward-teams span { padding: 5px 8px; background: #0003; border-radius: 9px; color: var(--team-accent); font-size: .8rem; }
+.reward-pop { animation: reward-arrival .5s cubic-bezier(.2,1.4,.4,1) both; }
+.help-bonus { padding-block: 10px; }
+.help-bonus-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.help-bonus-grid .action-button { padding: 8px; font-size: .8rem; }
+@keyframes reward-arrival { from { opacity: 0; transform: translate(-50%,18px) scale(.94); } to { opacity: 1; transform: translate(-50%,0) scale(1); } }
 .secret-clue { border: 1px solid color-mix(in srgb,var(--team-accent),transparent 55%); background: color-mix(in srgb,var(--team-accent) 6%,#160e20); padding: 16px; border-radius: 18px; margin: 20px 0; }
 .secret-clue h2 { margin: 0 0 10px; color: var(--team-accent); }
 .clue-visual { font: 2.8rem/1.5 "Segoe UI Emoji","Apple Color Emoji",system-ui; letter-spacing: 7px; text-align: center; }

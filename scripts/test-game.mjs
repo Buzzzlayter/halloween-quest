@@ -16,6 +16,68 @@ function propose(r, items = ROUNDS[r.roundIndex].solution) {
 const agree = r => { for (const role of roles.filter(role => role !== ROUNDS[r.roundIndex].captain)) action(r, role, "vote", { proposalId: r.proposal.id, approve: true }); };
 const blocked = fn => assert.throws(fn, GameError);
 
+test("non-captains earn visible points for sharing and checking; retries/veto cannot farm rewards", () => {
+  const r=room(); action(r,"host","start");
+  ready(r);
+  for (const team of view(r,"host").teams) assert.equal(team.score,50);
+  const id=propose(r);
+  action(r,"bats","vote",{proposalId:id,approve:false});
+  ready(r);
+  for (const team of view(r,"host").teams) assert.equal(team.score,50);
+  propose(r,["g1"]); agree(r);
+  assert.ok(view(r,"bats").teams.every(team=>team.score===50));
+  ready(r); propose(r); agree(r);
+  for (const team of view(r,"host").teams) assert.equal(team.score,350);
+  assert.equal(r.scoreAwards["1:bats:check"],true);
+  assert.equal(r.scoreAwards["1:ghosts:plan"],true);
+  assert.ok(view(r,"bats").scoreEvents.some(event=>event.team==="bats" && event.kind==="check" && event.points===100));
+  const scores=JSON.stringify(r.scores);
+  blocked(()=>action(r,"bats","vote",{proposalId:id,approve:true}));
+  assert.equal(JSON.stringify(r.scores),scores);
+  action(r,"host","next");
+  const restored=JSON.parse(JSON.stringify(r));
+  assert.deepEqual(view(restored,"bats").teams.map(t=>t.score),[350,350,350,350]);
+  action(restored,"bats","ready"); assert.equal(restored.scores.bats,400);
+});
+
+test("help bonus is host-confirmed, bounded per round and persists across reopen/refresh", () => {
+  const r=room();
+  blocked(()=>action(r,"host","helpBonus",{team:"bats"}));
+  action(r,"host","start");
+  blocked(()=>action(r,"bats","helpBonus",{team:"bats"}));
+  blocked(()=>action(r,"host","helpBonus",{team:"host"}));
+  action(r,"host","helpBonus",{team:"bats"});
+  assert.equal(r.scores.bats,100); assert.equal(view(r,"host").teams.find(t=>t.id==="bats").helpRewarded,true);
+  action(r,"host","helpBonus",{team:"bats"}); assert.equal(r.scores.bats,100);
+  action(r,"host","reopen");
+  action(r,"host","helpBonus",{team:"bats"}); assert.equal(r.scores.bats,100);
+  const restored=JSON.parse(JSON.stringify(r));
+  action(restored,"host","helpBonus",{team:"bats"}); assert.equal(restored.scores.bats,100);
+  ready(r); propose(r); agree(r); action(r,"host","next");
+  action(r,"host","helpBonus",{team:"bats"}); assert.equal(r.scores.bats,550);
+});
+
+test("ordered actions award once even if host reopens the ritual", () => {
+  const r=room(); r.roundIndex=5; r.phase="briefing";
+  ready(r); propose(r); agree(r);
+  assert.equal(r.scores.bats,150);
+  blocked(()=>action(r,"ghosts","activate")); assert.equal(r.scores.ghosts,150);
+  action(r,"bats","activate"); assert.equal(r.scores.bats,200);
+  action(r,"host","reopen"); ready(r); propose(r); agree(r);
+  assert.equal(r.scores.bats,200);
+  for (const role of ROUNDS[5].activationOrder) action(r,role,"activate");
+  for (const team of view(r,"host").teams) assert.equal(team.score,400);
+});
+
+test("pre-scoring rooms keep working without resetting state or guessing old points", () => {
+  const r=room(); delete r.scores; delete r.scoreAwards; delete r.scoreEvents; delete r.scoreSequence;
+  action(r,"host","start");
+  assert.ok(view(r,"bats").teams.every(team=>team.score===0));
+  action(r,"bats","ready");
+  assert.equal(view(r,"bats").teams.find(t=>t.id==="bats").score,50);
+  assert.equal(r.phase,"discussion");
+});
+
 test("test mode is host-only, reversible in lobby and never marks real devices connected", () => {
   const r = createRoom("123456");
   const send = (role, name, data={}) => dispatch(r, role, name, {roundIndex:r.roundIndex,...data});

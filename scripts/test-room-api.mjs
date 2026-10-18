@@ -35,6 +35,10 @@ try {
   await request("/api/rooms/"+host.code+"/qr/bats",sessions.bats,undefined,403);
   await request("/api/rooms/"+host.code+"/action",host,{action:"start",roundIndex:0},403,{Origin:"https://not-the-game.example"});
   await act("host","start");
+  await act("bats","helpBonus",{team:"bats"},403);
+  await act("host","helpBonus",{team:"bats"});
+  await act("host","helpBonus",{team:"bats"});
+  assert.equal((await state(host)).teams.find(t=>t.id==="bats").score,100);
   for (const round of ROUNDS) {
     for (const role of roles) {
       const s=await state(sessions[role]); assert.deepEqual(s.clue,round.clues[role]);
@@ -57,9 +61,12 @@ try {
     }
     s=await state(host); assert.equal(s.phase,"solved"); assert.equal(s.sparks.length,current+1);
     const snapshot=await state(sessions.bats); assert.equal(snapshot.sparks.length,s.sparks.length);
+    assert.deepEqual(snapshot.teams.map(t=>t.score),s.teams.map(t=>t.score));
+    assert.ok(snapshot.scoreEvents.some(event=>event.kind==="solved" && event.points===200));
     await act("host","next"); current=Math.min(current+1,ROUNDS.length-1);
   }
   const end=await state(host); assert.equal(end.phase,"finished"); assert.equal(end.sparks.length,8);
+  for (const team of end.teams) assert.equal(team.score,team.id==="bats"?3000:2900);
   for (const role of roles) assert.equal((await state(sessions[role])).phase,"finished");
   console.log("PASS: five independent sessions, all 8 rounds, concurrent readiness/votes, private clues, memory, rituals, QR and role/origin guards.");
 } finally {

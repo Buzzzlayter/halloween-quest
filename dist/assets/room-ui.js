@@ -67,9 +67,36 @@
       }
       el.style.setProperty("--team-accent", team.accent);
       const mark = state.phase === "lobby" ? (team.joined ? "✓" : "…") : (team.approved || team.ready ? "✓" : "…");
-      el.append(node("span", team.icon), node("small", team.name), node("strong", mark)); row.append(el);
+      el.append(node("span", team.icon), node("small", team.name), node("strong", String(team.score || 0), "team-score"),
+        node("small", "очков"), node("small", mark === "✓" ? "Готовы ✓" : "…", "team-readiness"));
+      if (team.id === state.role) el.setAttribute("aria-current", "true");
+      row.append(el);
     }
     return row;
+  }
+
+  function showReward(root, events, teams, role) {
+    root.replaceChildren();
+    const totals = teams.map(team => ({ ...team, gained: events.filter(event => event.team === team.id).reduce((sum, event) => sum + event.points, 0) })).filter(team => team.gained);
+    const own = totals.find(team => team.id === role);
+    root.append(node("strong", own ? `${own.icon} ${own.name}: +${own.gained}` : `✨ Команды получили +${totals.reduce((sum, team) => sum + team.gained, 0)}`, "reward-title"));
+    root.append(node("p", [...new Set(events.filter(event => !own || event.team === role).map(event => event.label))].join(" · "), "reward-reason"));
+    const row = node("div", undefined, "reward-teams");
+    for (const team of totals) {
+      const el = node("span", `${team.icon} ${team.name} +${team.gained}`); el.style.setProperty("--team-accent", team.accent); row.append(el);
+    }
+    root.append(row); root.hidden = false;
+    root.classList.remove("reward-pop");
+    void root.offsetWidth;
+    root.classList.add("reward-pop");
+  }
+
+  function helpBonus(state, handlers) {
+    const details = node("details", undefined, "dashboard-details help-bonus");
+    details.append(node("summary", "+100 за помощь другой команде"), node("p", "Отметьте команду, которая объяснила подсказку, помогла договориться или заметила ошибку. Один бонус команде за этап.", "clue-ask"));
+    const choices = node("div", undefined, "help-bonus-grid");
+    for (const team of state.teams) choices.append(button(`${team.icon} ${team.name} ${team.helpRewarded ? "✓" : "+100"}`, () => handlers.act("helpBonus", { team: team.id }), true, team.helpRewarded));
+    details.append(choices); return details;
   }
 
   function render(root, state, handlers, draft) {
@@ -94,6 +121,19 @@
     lamp.setAttribute("aria-label", `Собрано искр: ${state.sparks.length} из ${state.total}`);
     for (let i = 0; i < state.total; i++) lamp.append(node("span", "✦", i < state.sparks.length ? "lit" : ""));
     root.append(lamp);
+    if (state.phase !== "lobby" || !host) {
+      root.append(roster(state, handlers));
+      root.append(node("p", `Общая магия: ${state.teams.reduce((sum, team) => sum + (team.score || 0), 0)} очков · помогаем, а не соревнуемся`, "score-total"));
+    }
+    if (state.scoreEvents?.length) {
+      const history = node("details", undefined, "score-history");
+      history.append(node("summary", "За что получены очки"));
+      for (const event of state.scoreEvents.slice(-12).reverse()) {
+        const team = state.teams.find(team => team.id === event.team);
+        history.append(node("p", `${team.icon} ${team.name} +${event.points} · ${event.label}`, "score-history-entry"));
+      }
+      root.append(history);
+    }
     if (["closed", "finished"].includes(state.phase)) {
       const end = node("section", undefined, "room-panel room-end");
       end.append(node("div", state.phase === "finished" ? "🎃" : "🌙", "room-end-icon"), node("h1", state.phase === "finished" ? "Фонарь Хэллоуина сияет!" : "Комната закрыта"));
@@ -101,7 +141,6 @@
       if (host) end.append(button("Новая игра", handlers.newGame));
       root.append(end); return;
     }
-    if (state.phase !== "lobby" || !host) root.append(roster(state, handlers));
     if (state.phase === "lobby") {
       const panel = node("section", undefined, "room-panel");
       panel.append(node("h1", host ? "Подключите четыре команды" : `${own.icon} Вы — ${own.name}`));
@@ -138,6 +177,7 @@
     const rule = node("div", undefined, "room-rule");
     rule.append(node("strong", "Правило этого этапа"), node("p", round.rule)); panel.append(rule);
     if (state.feedback) panel.append(node("p", state.feedback, state.phase === "solved" ? "room-success" : "room-feedback"));
+    if (host) panel.append(helpBonus(state, handlers));
 
     if (state.phase === "solved") {
       panel.append(node("div", "✦", "shared-spark"));
@@ -219,5 +259,5 @@
     }
     root.append(panel);
   }
-  window.RoomUI = { render, node, button };
+  window.RoomUI = { render, node, button, showReward };
 })();

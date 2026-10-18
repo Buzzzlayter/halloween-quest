@@ -34,6 +34,7 @@ try {
     state=await act("next"); index=Math.min(index+1,ROUNDS.length-1);
   }
   assert.equal(state.phase,"finished"); assert.equal(state.sparks.length,8);
+  assert.ok(state.teams.every(t=>t.score===2900));
   assert.ok(state.teams.every(t=>!t.joined));
   console.log("PASS: host-only test checkbox, 4 simulated roles, all 8 rounds, no real team connections.");
 } finally { if(host) await act("close"); }

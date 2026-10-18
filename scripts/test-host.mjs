@@ -8,6 +8,31 @@ import { createRoom, joinRoom, act, dispatch, view } from "../server/game-engine
 const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const content = { window: {} }; vm.runInNewContext(await read("dist/assets/tasks.js"), content);
 
+test("shared score cards, explicit reward reasons and host-only help are visible", async () => {
+  const window={}, document={createElement:tag=>new Element(tag)};
+  vm.runInNewContext(await read("dist/assets/room-ui.js"),{window,document});
+  const r=createRoom("123456");
+  for (const role of Object.keys(r.members)) joinRoom(r,role,r.members[role].invite);
+  act(r,"host","start",{roundIndex:0});
+  act(r,"bats","ready",{roundIndex:0});
+  const root=new Element(), draft={items:[]};
+  const handlers={redraw(){},invite(){},newGame(){},act(name,data) { dispatch(r,"host",name,{roundIndex:0,...data}); }};
+  window.RoomUI.render(root,view(r,"host"),handlers,draft);
+  assert.ok(root.all().some(el=>el.className==="team-score" && el.textContent==="50"));
+  assert.ok(root.all().some(el=>el.textContent?.includes("Поделились подсказкой")));
+  await root.all().find(el=>el.textContent==="🦇 Мыши +100").click();
+  assert.equal(r.scores.bats,150);
+  window.RoomUI.render(root,view(r,"host"),handlers,draft);
+  assert.equal(root.all().find(el=>el.textContent==="🦇 Мыши ✓").disabled,true);
+  window.RoomUI.render(root,view(r,"bats"),handlers,draft);
+  assert.equal(root.all().some(el=>el.className?.includes("help-bonus")),false);
+  const toast=new Element();
+  window.RoomUI.showReward(toast,r.scoreEvents,view(r,"bats").teams,"bats");
+  assert.equal(toast.hidden,false);
+  assert.ok(toast.all().some(el=>el.textContent==="🦇 Мыши: +150"));
+  assert.ok(toast.all().some(el=>el.textContent?.includes("отметил ведущий")));
+});
+
 test("host checkbox enables rehearsal start and role tabs drive genuine team controls on one screen", async () => {
   const window={}, document={createElement:tag=>new Element(tag)};
   vm.runInNewContext(await read("dist/assets/room-ui.js"),{window,document});
@@ -70,7 +95,7 @@ test("public cards keep IDs/media and never ship private clues or solutions; no 
     assert.equal(task.title,round.title); assert.equal(task.text,round.goal); assert.ok(task.image);
     assert.equal("clues" in task,false); assert.equal("solution" in task,false);
   }
-  assert.equal(tasks.filter(t=>t.video).length,7);
+  assert.equal(tasks.filter(t=>t.video).length,8);
   for (const file of ["dist/index.html","dist/task/index.html","dist/play.html"]) {
     const html=await read(file);
     assert.doesNotMatch(html,/editor|task-steps|task-replay|gesture-art/);

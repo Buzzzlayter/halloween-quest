@@ -1,4 +1,5 @@
 import { TEAMS, ROUNDS } from "./scenario.mjs";
+import { award, rewardKey } from "./scoring.mjs";
 
 export class GameError extends Error {
   constructor(message, status = 409) { super(message); this.status = status; }
@@ -15,6 +16,7 @@ export function createRoom(code, now = Date.now(), makeToken = token) {
     members: Object.fromEntries(teamIds.map(id => [id, { invite: makeToken(), token: makeToken(), joined: false }])),
     roundIndex: 0, phase: "lobby", phaseStarted: now, version: 1, ready: {}, proposal: null,
     sparks: [], attempts: 0, ritualStep: 0, feedback: "", testMode: false,
+    scores: Object.fromEntries(teamIds.map(id => [id, 0])), scoreAwards: {}, scoreEvents: [], scoreSequence: 0,
     orders: ROUNDS.map(round => round.options.map(option => option.id).sort(() => Math.random() - 0.5))
   };
 }
@@ -42,6 +44,7 @@ function newRound(room, now) {
 function solve(room, now) {
   const round = ROUNDS[room.roundIndex];
   if (!room.sparks.includes(round.id)) room.sparks.push(round.id);
+  for (const id of teamIds) award(room, id, "solved", now);
   room.phase = "solved"; room.phaseStarted = now; room.feedback = round.result;
 }
 function validateItems(round, items) {
@@ -79,11 +82,17 @@ export function act(room, role, action, data = {}, now = Date.now()) {
     requireRule(room.phase === "lobby", "Игра уже началась.");
     requireRule(room.testMode || teamIds.every(id => room.members[id].joined), "Сначала подключите все четыре команды.");
     newRound(room, now);
+  } else if (action === "helpBonus") {
+    requireRule(role === "host", "Бонус за помощь отмечает ведущий.", 403);
+    requireRule(!["lobby", "finished"].includes(room.phase), "Отмечайте помощь во время этапа.");
+    requireRule(teamIds.includes(data.team), "Выберите команду.", 400);
+    if (!award(room, data.team, "help", now)) return;
   } else if (action === "ready") {
     requireRule(role !== "host", "Готовность отмечают команды.", 403);
     if (room.phase === "answer" && room.ready[role]) return;
     requireRule(["briefing", "discussion"].includes(room.phase), "Сейчас идёт другая часть задания.");
     room.ready[role] = true;
+    award(room, role, "clue", now);
     room.phase = allReady(room) ? "answer" : "discussion";
     if (room.phase === "answer") room.phaseStarted = now;
   } else if (action === "propose") {
@@ -107,10 +116,13 @@ export function act(room, role, action, data = {}, now = Date.now()) {
         if (!correct) {
           room.attempts++; room.proposal = null; room.ready = {}; room.phase = "discussion";
           room.feedback = round.retry;
-        } else if (round.activationOrder) {
-          room.phase = "ritual"; room.ritualStep = 0; room.phaseStarted = now;
-          room.feedback = "План согласован. Теперь каждая команда действует со своего телефона.";
-        } else solve(room, now);
+        } else {
+          for (const id of teamIds) award(room, id, id === round.captain ? "plan" : "check", now);
+          if (round.activationOrder) {
+            room.phase = "ritual"; room.ritualStep = 0; room.phaseStarted = now;
+            room.feedback = "План согласован. Теперь каждая команда действует со своего телефона.";
+          } else solve(room, now);
+        }
       }
     }
   } else if (action === "activate") {
@@ -118,6 +130,7 @@ export function act(room, role, action, data = {}, now = Date.now()) {
     requireRule(room.phase === "ritual", "Сначала согласуйте общий план.");
     requireRule(round.activationOrder[room.ritualStep] === role, "Сейчас очередь другой команды. Сверьтесь с общим планом.");
     room.ritualStep++;
+    award(room, role, "action", now);
     if (room.ritualStep === round.activationOrder.length) solve(room, now);
   } else if (action === "reopen") {
     requireRule(role === "host", "Подсказки открывает ведущий.", 403);
@@ -141,7 +154,10 @@ export function view(room, role) {
     code: room.code, role, version: room.version, expiresAt: room.expiresAt, testMode: !!room.testMode,
     phase: room.phase, phaseStarted: room.phaseStarted, roundIndex: room.roundIndex, total: ROUNDS.length,
     sparks: [...room.sparks], attempts: room.attempts, feedback: room.feedback,
-    teams: TEAMS.map(team => ({ ...team, joined: room.members[team.id].joined, ready: !!room.ready[team.id], approved: !!room.proposal?.votes[team.id] })),
+    scoreEvents: clone(room.scoreEvents || []),
+    teams: TEAMS.map(team => ({ ...team, score: room.scores?.[team.id] || 0,
+      helpRewarded: !!room.scoreAwards?.[rewardKey(round.id, team.id, "help")],
+      joined: room.members[team.id].joined, ready: !!room.ready[team.id], approved: !!room.proposal?.votes[team.id] })),
     round: visible ? {
       id: round.id, title: round.title, goal: round.goal, story: round.story, rule: round.rule,
       captain: round.captain, kind: round.kind, slots: round.slots, allowRepeat: !!round.allowRepeat,

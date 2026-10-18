@@ -6,7 +6,7 @@
   const storageKey = "halloween-room-session-v1";
   const params = new URLSearchParams(window.location.search);
   let session = null, state = null, draft = { items: [] }, pending = false, polling = false, timer, qrBlob;
-  let inviteRequest = 0;
+  let inviteRequest = 0, rewardTimer;
   function tell(text, error = true) { message.textContent = text; message.hidden = !text; message.className = error ? "room-message" : "room-message room-success"; }
   function saveSession(value) {
     session = value;
@@ -33,8 +33,16 @@
   function accept(next) {
     if (state && next.code === state.code && next.version < state.version) return;
     const changed = !state || state.version !== next.version || state.code !== next.code;
+    const lastReward = state?.scoreEvents?.at(-1)?.id || 0;
+    const freshRewards = state?.code === next.code ? (next.scoreEvents || []).filter(event => event.id > lastReward) : [];
     if (!state || state.roundIndex !== next.roundIndex || (state.proposal && !next.proposal)) draft = { items: [], testRole: draft.testRole };
     state = next;
+    if (freshRewards.length) {
+      const role = state.role === "host" && state.testMode && draft.testRole ? draft.testRole : state.role;
+      window.RoomUI.showReward(get("room-reward"), freshRewards, state.teams, role);
+      window.clearTimeout(rewardTimer);
+      rewardTimer = window.setTimeout(() => { get("room-reward").hidden = true; }, 6500);
+    }
     if (changed) draw();
   }
   function draw() {
@@ -84,6 +92,7 @@
   }
   async function connect() {
     state = null; draft = { items: [] };
+    window.clearTimeout(rewardTimer); get("room-reward").hidden = true;
     window.history.replaceState(null, "", "/play.html?room=" + session.code);
     await poll(); schedule();
   }
@@ -135,6 +144,7 @@
   get("leave-room").addEventListener("click", () => {
     if (!window.confirm("Выйти на этом телефоне? Остальные команды продолжат игру.")) return;
     saveSession(null); state = null; window.clearTimeout(timer);
+    window.clearTimeout(rewardTimer); get("room-reward").hidden = true;
     window.history.replaceState(null, "", "/play.html"); welcome();
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
