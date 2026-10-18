@@ -4,78 +4,54 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b0712" />
-    <title>Хэллоуинский маршрут — проверка заданий</title>
+    <title>Тайна погасшего фонаря — панель ведущего</title>
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
-  <body class="preview-page">
-    <script>
-      if (new URLSearchParams(window.location.search).has("id")) {
-        document.body.className = "task-page";
-      }
-    </script>
-    <main class="preview-shell">
-      <p class="preview-kicker">Панель проверки</p>
-      <h1>Хэллоуинский маршрут</h1>
-      <p class="preview-intro">
-        Восемь волшебных друзей и простые игры для всей команды от 3 лет.
-        Взрослый читает карточку, а дети вместе выполняют задание.
-      </p>
-
-      <div class="task-grid" id="task-list" aria-label="Список заданий"></div>
+  <body class="preview-page host-page">
+    <script>if (new URLSearchParams(window.location.search).has("id")) document.body.className = "task-page";</script>
+    <main class="preview-shell host-shell">
+      <header class="page-heading"><div><p class="preview-kicker">Панель ведущего</p><h1 id="game-title">Тайна погасшего фонаря</h1><p class="page-subtitle" id="game-summary"></p></div></header>
+      <section class="game-panel" id="control">
+        <p class="game-opening">У каждой команды свой путь: вопросы, коды и видео за верные ответы. Помогайте друзьям подсказками и получайте очки.</p>
+        <a class="action-button" href="/play.html">Создать / продолжить общую игру</a>
+        <p class="game-note">Число команд выбирается при создании комнаты: от 1 до числа карточек. Для проверки достаточно одной команды. По телефону на команду и телефон ведущего. Нужен интернет, реквизит не нужен.</p>
+      </section>
+      <details class="game-panel rules-disclosure" id="rules">
+        <summary>Как объяснить детям</summary>
+        <p class="game-opening" id="game-opening"></p><ul class="game-rules" id="game-rules"></ul>
+        <details class="dashboard-details" id="host-plan"><summary>Подготовка и финал</summary>
+          <p>Разделите детей на выбранное число смешанных по возрасту команд. На своём телефоне создайте игру и покажите каждой команде её QR. Подключиться нужно один раз. После старта каждая команда проходит задания в своём темпе.</p>
+          <p>Сайт автоматически считает подходящие ответы и проверяет коды. У ведущего видны прогресс, ответы и очки всех команд. Следующие этапы команды открывают сами; малыши играют вместе со старшими.</p>
+          <p>Играйте в видимой части двора, не бегайте к дороге и не заходите в подъезды. Ошибки не выбывают из игры: просто обсудите ещё раз.</p>
+          <p id="game-finale" class="game-opening"></p>
+        </details>
+      </details>
+      <details class="game-panel rules-disclosure" id="teams"><summary>Примеры команд</summary><div class="team-grid" data-team-list></div></details>
+      <details class="game-panel rules-disclosure" id="images"><summary>Видеоролики и прежние карточки</summary>
+        <p class="game-note">Галерея роликов и карточек прежнего формата. В новой игре задания и подсказки открываются внутри комнаты; эти QR не подключают команду.</p>
+        <div id="quest-list" class="host-quest-list"></div>
+      </details>
+      <dialog class="quest-qr-dialog" id="quest-qr" aria-labelledby="qr-title">
+        <form method="dialog"><button class="action-button action-button--quiet" aria-label="Закрыть QR-код">Закрыть</button></form>
+        <h2 id="qr-title"></h2><p id="qr-name"></p><img id="qr-image" width="300" height="300" alt="" />
+        <p id="qr-pending" hidden>Загрузка QR…</p><a id="qr-open-task" class="action-button" href="?id=1">Открыть образ</a>
+      </dialog>
+      <noscript>Для проведения игры включите JavaScript.</noscript>
     </main>
-
-    <main class="task-shell" id="task" aria-live="polite">
-      <section class="task-card">
-        <div class="animation-stage" id="animation" aria-hidden="true"></div>
-        <div class="task-copy">
-          <p class="task-kicker" id="task-kicker"></p>
-          <h1 id="task-title">Загрузка…</h1>
-          <p class="task-description" id="task-description"></p>
-          <h2 class="task-instruction" id="task-instruction">Задание для команды</h2>
-          <p class="task-text" id="task-text"></p>
+    <main class="task-shell" id="task">
+      <section class="task-card quest-card">
+        <header class="quest-heading"><p class="task-kicker" id="task-kicker"></p><h1 id="task-title">Загрузка…</h1></header>
+        <div class="animation-stage" id="animation"></div>
+        <div class="quest-play"><p id="task-story"></p><p class="quest-prompt" id="task-prompt"></p>
+          <a class="action-button" href="/play.html">Открыть общую игру</a>
+          <p class="game-note">Это образ этапа. Секретные подсказки и общий ответ — на телефонах команд в комнате ведущего.</p>
         </div>
+        <nav class="quest-footer"><a class="rules-link" href="/">← Ведущему</a></nav>
       </section>
     </main>
-
     <script src="assets/tasks.js"></script>
-    <script>
-      const list = document.querySelector("#task-list");
-
-      window.HALLOWEEN_TASKS.forEach((task) => {
-        const link = document.createElement("a");
-        link.className = "task-link";
-        link.href = `?id=${encodeURIComponent(task.id)}`;
-        link.style.setProperty("--card-accent", task.accent);
-
-        if (task.image) {
-          const thumbnail = document.createElement("img");
-          thumbnail.className = "task-link__image";
-          thumbnail.src = task.image.replace(/^\.\.\//, "");
-          thumbnail.alt = "";
-          thumbnail.loading = "lazy";
-          thumbnail.width = 96;
-          thumbnail.height = 96;
-          link.append(thumbnail);
-          link.classList.add("task-link--illustrated");
-        }
-
-        const number = document.createElement("span");
-        number.className = "task-link__number";
-        number.textContent = String(task.id).padStart(2, "0");
-
-        const label = document.createElement("span");
-        label.className = "task-link__label";
-        label.textContent = task.title;
-
-        const arrow = document.createElement("span");
-        arrow.className = "task-link__arrow";
-        arrow.setAttribute("aria-hidden", "true");
-        arrow.textContent = "→";
-
-        link.append(number, label, arrow);
-        list.append(link);
-      });
-    </script>
+    <script src="assets/game-page.js"></script>
+    <script src="assets/control-panel.js"></script>
     <script src="assets/task-page.js"></script>
   </body>
 </html>

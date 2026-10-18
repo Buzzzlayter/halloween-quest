@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#0b0712" />
+    <title>Общая игра — Искры Хэллоуина</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body class="preview-page room-page">
+    <main class="room-shell">
+      <header class="room-heading"><a href="/" class="rules-link">← Главная</a><span id="room-code"></span><span id="room-role"></span></header>
+      <p id="room-message" class="room-message" role="status" aria-live="polite" hidden></p>
+      <div id="room-reward" class="room-reward" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+      <div id="room-app"><p>Подключаемся к игре…</p></div>
+      <footer class="room-foot"><button type="button" class="text-button" id="leave-room" hidden>Выйти на этом телефоне</button></footer>
+    </main>
+    <dialog class="quest-qr-dialog" id="invite-dialog" aria-labelledby="invite-title">
+      <form method="dialog"><button class="action-button action-button--quiet">Закрыть</button></form>
+      <h2 id="invite-title"></h2><p>Сканируйте телефоном этой команды.</p>
+      <img id="invite-image" width="300" height="300" alt="QR-приглашение команды" hidden />
+      <p id="invite-loading">Создаём QR…</p>
+      <input id="invite-link" readonly aria-label="Ссылка команды" />
+      <button type="button" class="action-button" id="copy-invite">Скопировать ссылку</button>
+    </dialog>
+    <noscript>Для общей игры включите JavaScript.</noscript>
+    <script src="assets/media.js"></script>
+    <script src="assets/room-ui.js"></script>
+    <script src="assets/flow-ui.js"></script>
+    <script src="assets/room-client.js"></script>
+  </body>
+</html>

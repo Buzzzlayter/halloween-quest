@@ -1,0 +1,4 @@
+interface:
+  display_name: "Деплой Halloween"
+  short_description: "Публикация квеста в Cloudflare с проверкой QR"
+  default_prompt: "Используй $halloween-deploy, чтобы опубликовать обновления квеста и проверить все QR-ссылки."

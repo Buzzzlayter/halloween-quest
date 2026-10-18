@@ -4,6 +4,7 @@
   "private": true,
   "description": "Eight illustrated Halloween quests with stable QR links",
   "scripts": {
+    "test": "node --test tests/test-game.mjs tests/test-host.mjs tests/test-flow.mjs tests/test-flow-ui.mjs",
     "build": "node scripts/package-site.mjs",
     "deploy": "npm run build && wrangler deploy",
     "cloudflare:login": "wrangler login --device",
@@ -12,5 +13,8 @@
   "devDependencies": {
     "sharp": "^0.35.5",
     "wrangler": "^4.151.1"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
   }
 }
