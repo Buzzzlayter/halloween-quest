@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import {request,runFlow} from "./flow-api-helpers.mjs";
+const base=process.argv[2];
+if(!base||!/^https?:\/\//.test(base))throw Error("Pass an explicit local or production URL");
+let host;
+try {
+  host=await(await request(base,"/api/rooms",null,{teamCount:3})).json();
+  const path="/api/rooms/"+host.code;
+  const state=async auth=>(await request(base,path+"/state",auth)).json();
+  const action=async(auth,name,data={},status=200)=>(await request(base,path+"/action",auth,{action:name,...data},status)).json();
+  const initial=await state(host),[a,b,c]=initial.teams.map(t=>t.id);
+  const join=async id=>(await request(base,path+"/join",null,{team:id,invite:initial.invites[id]})).json();
+  const first=await join(a);
+  await action(first,"setTeamActive",{team:b,active:false},403);
+  await action(host,"setTeamActive",{team:b,active:false});
+  assert.equal((await state(host)).phase,"lobby");
+  await action(host,"setTeamActive",{team:c,active:false});
+  assert.equal((await state(first)).phase,"playing");
+  await action(host,"setTeamActive",{team:a,active:false},409);
+  await request(base,path+"/join",null,{team:b,invite:initial.invites[b]},403);
+  await action(host,"setTeamActive",{team:b,active:true});
+  const second=await join(b),guides=(await state(host)).guides;
+  const answers=Object.fromEntries(guides[a][0].questions.map(q=>[q.id,q.answers[0].variants[0]]));
+  await action(first,"finishQuestions",{roundIndex:0,answers});
+  await action(host,"setTeamActive",{team:a,active:false});
+  await action(first,"continue",{roundIndex:0},403);
+  await action(second,"thank",{roundIndex:0,helper:a},409);
+  await action(host,"setTeamActive",{team:a,active:true});
+  assert.equal((await state(first)).run.cleared,true);
+  assert.equal((await state(first)).teams.find(t=>t.id===a).score,400);
+  await action(first,"continue",{roundIndex:0});
+  const before=await state(host);
+  await action(second,"finishGame",{},403);
+  const ended=await action(host,"finishGame");
+  assert.equal(ended.phase,"finished");assert.equal(ended.finale.reason,"host");
+  assert.equal(ended.finale.completed,0);assert.equal(ended.finale.activeTeams,2);
+  assert.deepEqual(ended.teams.map(t=>t.score),before.teams.map(t=>t.score));
+  assert.deepEqual(ended.finale,(await state(first)).finale);
+  assert.deepEqual(ended.finale,(await state(second)).finale);
+  assert.equal(ended.finale.standings.find(t=>t.id===c).rank,null);
+  assert.equal(ended.finale.standings.find(t=>t.id===a).rank,1);
+  assert.deepEqual((await action(host,"finishGame")).finale,ended.finale);
+  await action(first,"continue",{roundIndex:1},409);
+  console.log("PASS: host-only slot recovery, autostart, score-preserving resume, shared early finale and inactive ranking.");
+} finally {
+  if(host)await request(base,"/api/rooms/"+host.code+"/action",host,{action:"close"});
+}
+await Promise.all([runFlow(base,1),runFlow(base,8)]);

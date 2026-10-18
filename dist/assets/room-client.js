@@ -49,7 +49,8 @@
     if (!state) return;
     get("room-code").textContent = "Игра " + state.code;
     const team = state.teams.find(team => team.id === state.role);
-    get("room-role").textContent = team ? team.icon + " " + team.name : "Ведущий";
+    if(team)get("room-role").replaceChildren(window.RoomUI.teamLabel(team));
+    else get("room-role").textContent = "Ведущий";
     get("leave-room").hidden = false;
     const focused=document.activeElement;
     const focusState=focused?.id ? {id:focused.id,start:focused.selectionStart,end:focused.selectionEnd} : null;
@@ -66,17 +67,24 @@
       const end = node("details", undefined, "room-close");
       end.id="room-management";
       end.open=opened.includes(end.id);
-      end.append(node("summary", "Управление комнатой"), button("Завершить эту игру", async () => {
-        if (window.confirm("Завершить игру для всех команд?")) await action("close");
+      end.append(node("summary", "Управление комнатой"), button("Закрыть комнату без итогов", async () => {
+        if (window.confirm("Закрыть комнату для всех без финальных роликов и рейтинга? Продолжить игру в ней будет нельзя.")) await action("close");
       }, true)); root.append(end);
     }
   }
   async function action(name, data = {}) {
     if (pending || !session || !state) return;
+    const actionSession=session;
     pending = true; tell("");
-    try { accept(await request(`/api/rooms/${session.code}/action`, { ...data, action: name, roundIndex: state.roundIndex })); }
-    catch (error) { tell(error.name === "AbortError" ? "Связь задерживается. Дождитесь обновления, прежде чем повторять действие." : error.message); await poll(); }
-    finally { pending = false; draw(); }
+    try {
+      const next=await request(`/api/rooms/${actionSession.code}/action`, { ...data, action: name, roundIndex: state.roundIndex },actionSession);
+      if(session===actionSession&&!displayingWelcome)accept(next);
+    }
+    catch (error) {
+      if(session!==actionSession||displayingWelcome)return;
+      tell(error.name === "AbortError" ? "Связь задерживается. Дождитесь обновления, прежде чем повторять действие." : error.message); await poll();
+    }
+    finally { pending = false; if(session===actionSession&&!displayingWelcome)draw(); }
   }
   async function poll() {
     if (!session || polling || displayingWelcome) return;
@@ -105,6 +113,7 @@
   async function connect() {
     displayingWelcome = false; welcomeRequest++;
     state = null; draft = { items: [] };
+    window.FlowUI?.stopMedia();
     root.replaceChildren(node("p", "Подключаемся к игре…"));
     window.clearTimeout(rewardTimer); get("room-reward").hidden = true;
     window.history.replaceState(null, "", "/play.html?room=" + session.code);
@@ -114,14 +123,22 @@
     if (pending) return;
     if (!get("room-size")) { await welcome(); return; }
     pending = true; tell("");
+    const creatingSession=session,creatingWelcome=welcomeRequest;
     const teamCount = Number(get("room-size").value);
     const scoring = roomConfig.scoring && window.FlowUI ? window.FlowUI.readScoring("setup-score") : undefined;
-    try { saveSession(await request("/api/rooms", { teamCount, scoring }, null)); await connect(); }
-    catch (error) { tell(error.message); }
+    try {
+      const created=await request("/api/rooms", { teamCount, scoring }, null);
+      if(session!==creatingSession||welcomeRequest!==creatingWelcome)return;
+      saveSession(created); await connect();
+    }
+    catch (error) { if(session===creatingSession&&welcomeRequest===creatingWelcome)tell(error.message); }
     finally { pending = false; }
   }
   async function welcome() {
     displayingWelcome = true; window.clearTimeout(timer);
+    window.FlowUI?.stopMedia();
+    inviteRequest++;get("invite-dialog").close?.();
+    if(qrBlob){URL.revokeObjectURL(qrBlob);qrBlob=null;}
     const currentWelcome = ++welcomeRequest;
     root.replaceChildren();
     get("room-code").textContent = ""; get("room-role").textContent = "";
@@ -148,21 +165,21 @@
   async function showInvite(teamId) {
     const team = state.teams.find(team => team.id === teamId);
     const dialog = get("invite-dialog"), image = get("invite-image"), loading = get("invite-loading");
-    const current = ++inviteRequest;
+    const current = ++inviteRequest,invitingSession=session;
     if (qrBlob) { URL.revokeObjectURL(qrBlob); qrBlob = null; }
     const link = new URL("/play.html", window.location.origin);
     link.searchParams.set("room", state.code); link.searchParams.set("team", teamId); link.searchParams.set("invite", state.invites[teamId]);
-    get("invite-title").textContent = team.icon + " " + team.name;
+    get("invite-title").textContent = team.name;
     get("invite-link").value = link.href;
-    image.hidden = true; loading.hidden = false; loading.textContent = "Создаём QR…";
+    image.hidden = true; image.removeAttribute("src"); loading.hidden = false; loading.textContent = "Создаём QR…";
     if (!dialog.open) dialog.showModal();
     try {
       const response = await fetch(`/api/rooms/${state.code}/qr/${teamId}`, { headers: { Authorization: "Bearer " + session.token }, cache: "no-store" });
       if (!response.ok) throw new Error("QR не загрузился. Скопируйте ссылку ниже.");
       const blob = await response.blob();
-      if (current !== inviteRequest || !dialog.open) return;
+      if (current !== inviteRequest || !dialog.open || session!==invitingSession) return;
       qrBlob = URL.createObjectURL(blob); image.src = qrBlob; image.hidden = false; loading.hidden = true;
-    } catch (error) { if (current === inviteRequest) loading.textContent = error.message; }
+    } catch (error) { if (current === inviteRequest && session===invitingSession) loading.textContent = error.message; }
   }
   get("invite-dialog").addEventListener("close", () => {
     inviteRequest++; if (qrBlob) { URL.revokeObjectURL(qrBlob); qrBlob = null; }

@@ -25,16 +25,24 @@ export async function runFlow(base,count) {
     await request(base,"/api/rooms/"+host.code+"/state",null,undefined,401);
     {
       await action("host","start",{},409);
-      for(const role of roles)sessions[role]=await (await request(base,"/api/rooms/"+host.code+"/join",null,{team:role,invite:hostState.invites[role]})).json();
+      for(const [index,role] of roles.entries()) {
+        sessions[role]=await (await request(base,"/api/rooms/"+host.code+"/join",null,{team:role,invite:hostState.invites[role]})).json();
+        const state=await teamState(role);
+        assert.equal(state.phase,index===roles.length-1?"playing":"lobby");
+      }
       const qr=await request(base,"/api/rooms/"+host.code+"/qr/"+roles.at(-1),host);
       assert.match(qr.headers.get("content-type"),/image\/svg\+xml/);assert.match(await qr.text(),/<svg/);
       await request(base,"/api/rooms/"+host.code+"/qr/"+roles[0],sessions[roles[0]],undefined,403);
     }
-    await action("host","start");
+    hostState=await getState("host");
+    assert.equal(hostState.phase,"playing");
     assert.equal("testMode" in hostState,false);assert.equal("previews" in hostState,false);
     await action("host","setTestMode",{enabled:true},403);
     await action("host","submitQuestions",{asTeam:roles[0],answers:{}},403);
-    const guide=hostState.guide;
+    const guides=hostState.guides||Object.fromEntries(roles.map(role=>[role,hostState.guide]));
+    const assigned=roles.flatMap(role=>guides[role].flatMap(stage=>(stage.questions||[]).map(q=>q.id)));
+    const codes=roles.flatMap(role=>guides[role].filter(s=>s.type==="code").map(s=>s.code));
+    assert.equal(new Set(assigned).size,assigned.length);assert.equal(new Set(codes).size,codes.length);
     const [first,helper]=roles;
     await action(first,"thank",{helper:first},400);
     if(helper) {
@@ -44,10 +52,13 @@ export async function runFlow(base,count) {
     for(const role of roles) {
       let own=await teamState(role);
       assert.equal("guide" in own,false);assert.equal("runs" in own,false);
-      for(const stage of guide) {
-        if(count===1)assert.equal(own.hints.at(-1).text,stage.hintParts.join(" "));
+      assert.equal("guides" in own,false);assert.equal("taskCatalog" in own,false);
+      for(const stage of guides[role]) {
+        assert.equal("hints" in own,false);
         if(stage.type==="questions") {
           assert.equal("answers" in own.stage.questions[0],false);
+          assert.ok(own.stage.questions.every(q=>!("solution" in q)));
+          assert.deepEqual(stage.questions.map(q=>q.videoId),stage.id==="welcome"?[1,1]:[5,6,7,8]);
           const answers=Object.fromEntries(stage.questions.map(q=>[q.id,q.answers.slice(0,q.required).map(a=>a.variants[0])]));
           own=await action(role,"submitQuestions",{answers});
         } else {
@@ -55,6 +66,8 @@ export async function runFlow(base,count) {
           own=await action(role,"submitCode",{code:stage.code});
         }
         assert.equal(own.run.cleared,true);assert.ok(own.run.stageVideos.length);
+        assert.equal(own.stage.epilogue,stage.epilogue);
+        if(stage.type==="questions")assert.deepEqual(own.stage.questions.map(q=>q.solution.explanation),stage.questions.map(q=>q.explanation));
         const score=own.teams.find(t=>t.id===role).score;
         // Resubmission cannot award the completed block again.
         if(stage.type==="code")own=await action(role,"submitCode",{code:stage.code});
@@ -65,14 +78,18 @@ export async function runFlow(base,count) {
       if(role===first&&helper) {
         const waiting=await teamState(helper);
         assert.equal(waiting.roundIndex,0);assert.equal(waiting.run.done,false);
+        assert.equal("finale" in own,false);assert.equal("finale" in waiting,false);
       }
     }
     hostState=await getState("host");
     assert.equal(hostState.phase,"finished");
+    assert.deepEqual(hostState.finale.videoIds,[5,6,7,8]);
+    assert.deepEqual(hostState.finale.allVideoIds,[1,2,3,4,5,6,7,8]);
+    for(const role of roles)assert.deepEqual((await teamState(role)).finale,hostState.finale);
     for(const team of hostState.teams) {
-      assert.equal(team.score,team.id===helper?2700:2600);
-      assert.equal(hostState.runs[team.id].relevant,7);assert.equal(hostState.runs[team.id].codes,3);
+      assert.equal(team.score,team.id===helper?2600:2500);
+      assert.equal(hostState.runs[team.id].relevant,6);assert.equal(hostState.runs[team.id].codes,3);
     }
-    console.log("PASS: "+count+" teams, independent sessions, automatic questions/codes, all videos, points and hints"+(helper?", peer thanks.":" (all parts for the only team)."));
+    console.log("PASS: "+count+" teams, independent sessions, automatic questions/codes, all videos, points, no client hints"+(helper?", peer thanks.":"."));
   } finally { if(host)await request(base,"/api/rooms/"+host.code+"/action",host,{action:"close"}); }
 }

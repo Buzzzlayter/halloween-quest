@@ -1,4 +1,5 @@
 import { TEAMS, ROUNDS } from "./scenario.mjs";
+import TEAM_ART from "./team-art.json" with {type:"json"};
 
 const EXTRA_TEAMS = [
   {id:"candles", name:"Огоньки", icon:"🕯️", accent:"#ffd166", power:"Помогают найти решение"},
@@ -10,7 +11,7 @@ export const roomLimits = () => ({ minTeams: 1, maxTeams: ROUNDS.length, default
 export function teamCatalogue() {
   return ROUNDS.map((round,index) => TEAMS[index] || EXTRA_TEAMS[index-TEAMS.length] || {
     id:"guard-"+round.id, name:"Хранители "+round.id, icon:"✨", accent:"#d8b8ff", power:"Помогают общему решению"
-  });
+  }).map(team=>({...team,artId:TEAM_ART[team.id]}));
 }
 export const teamsFor = room => room.teams || TEAMS;
 export const roundsFor = room => room.rounds || ROUNDS;

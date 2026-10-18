@@ -47,24 +47,27 @@ export class QuestRoom extends DurableObject {
       if (command === "create" && request.method === "POST") {
         if (this.room) return json({ error: "occupied" }, 409);
         const data = await readJson(request);
-        this.room = createRoom(data.code, Date.now(), undefined, data.teamCount, {scoring:data.scoring});
-        await this.ctx.storage.put("room", this.room);
-        await this.ctx.storage.setAlarm(this.room.expiresAt);
+        const next = createRoom(data.code, Date.now(), undefined, data.teamCount, {scoring:data.scoring});
+        await this.ctx.storage.setAlarm(next.expiresAt);
+        await this.ctx.storage.put("room", next);
+        this.room = next;
         return json({ code: this.room.code, role: "host", token: this.room.hostToken });
       }
       if (!this.room) return json({ error: "Комната не найдена. Попросите новый QR у ведущего." }, 404);
       if (Date.now() > this.room.expiresAt) return json({ error: "Время комнаты истекло. Создайте новую игру." }, 410);
       if (command === "join" && request.method === "POST") {
         const data = await readJson(request);
-        const session = joinRoom(this.room, data.team, data.invite);
-        await this.ctx.storage.put("room", this.room); return json(session);
+        const next=structuredClone(this.room);
+        const session = joinRoom(next, data.team, data.invite);
+        await this.ctx.storage.put("room", next);this.room=next;return json(session);
       }
       const role = authorize(this.room, request.headers.get("Authorization")?.replace(/^Bearer /, ""));
       if (command === "state" && request.method === "GET") return json(view(this.room, role));
       if (command === "action" && request.method === "POST") {
         const data = await readJson(request);
-        dispatch(this.room, role, data.action, data);
-        await this.ctx.storage.put("room", this.room);
+        const next=structuredClone(this.room);
+        dispatch(next, role, data.action, data);
+        await this.ctx.storage.put("room", next);this.room=next;
         return json(view(this.room, role));
       }
       if (command === "qr" && request.method === "GET") {

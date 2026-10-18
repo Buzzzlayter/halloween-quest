@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import FLOW from "../server/quest-flow.json" with { type:"json" };
-import {createRoom,joinRoom,authorize,act,dispatch,view,validateScoring,validateFlow,normalizeAnswer,GameError} from "../server/game-engine.mjs";
+import FLOW from "./fixtures/legacy-flow.json" with { type:"json" };
+import {createRoom} from "./fixtures/fixed-room.mjs";
+import {joinRoom,authorize,act,dispatch,view,validateScoring,validateFlow,normalizeAnswer,GameError} from "../server/game-engine.mjs";
 import * as legacy from "../server/legacy-engine.mjs";
 const make=(count=2,scoring)=>{
   const r=createRoom("123456",Date.now(),undefined,count,{scoring});
@@ -169,7 +170,7 @@ test("all slot sizes finish through real team sessions without phantom teams or 
     assert.equal(r.phase,"finished");assert.ok(r.teams.every(t=>r.scores[t.id]===2600));
   }
 });
-test("one team receives every hint; ordinary joining is required and removed test bypasses are rejected",()=>{
+test("one team plays without client hints; ordinary joining is required and removed test bypasses are rejected",()=>{
   const r=createRoom("123456",Date.now(),undefined,1),role=r.teams[0].id;
   assert.throws(()=>dispatch(r,"host","setTestMode",{enabled:true}),GameError);
   // Even stored flags from older v2 rooms cannot bypass real joining.
@@ -178,7 +179,7 @@ test("one team receives every hint; ordinary joining is required and removed tes
   joinRoom(r,role,r.members[role].invite);dispatch(r,"host","start");
   assert.throws(()=>dispatch(r,"host","submitQuestions",{asTeam:role,roundIndex:0,answers:right(r.flow[0])}),e=>e.status===403);
   for(const stage of r.flow) {
-    assert.equal(view(r,role).hints.at(-1).text,stage.hintParts.join(" "));
+    assert.equal("hints" in view(r,role),false);
     assert.throws(()=>send(r,role,"thank",{helper:role}),GameError);
     submitRight(r,role);send(r,role,"continue");
   }
@@ -191,7 +192,7 @@ test("legacy rooms remain playable and authorizations never expose another team'
   assert.equal(authorize(r,r.members[a].token),a);
   assert.throws(()=>dispatch(r,a,"thank",{asTeam:b,helper:a,roundIndex:0}),GameError);
   const own=view(r,a),other=view(r,b);
-  assert.notDeepEqual(own.hints,other.hints);
+  assert.equal("hints" in own,false);assert.equal("hints" in other,false);
   assert.equal("hints" in own.teams.find(t=>t.id===b),false);
   assert.throws(()=>send(r,a,"submitQuestions",{answers:{wrong:["value"]}}),GameError);
 });

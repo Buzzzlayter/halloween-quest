@@ -8,6 +8,28 @@ import { createRoom, joinRoom, act, dispatch, view } from "../server/legacy-engi
 const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const content = { window: {} }; vm.runInNewContext(await read("dist/assets/tasks.js"), content);
 
+test("QR invitation title is text-only and QR image sizing cannot stretch nested team artwork",async()=>{
+  const client=await read("dist/assets/room-client.js"),css=await read("dist/assets/styles.css");
+  assert.ok(client.includes('get("invite-title").textContent = team.name;'));
+  assert.doesNotMatch(client,/get\("invite-title"\)\.replaceChildren/);
+  assert.ok(css.includes(".quest-qr-dialog > img {"));
+  assert.ok(!css.includes(".quest-qr-dialog img {"));
+});
+
+test("home page omits children's explanation and example teams while preserving game entry and QR gallery",async()=>{
+  const html=await read("dist/index.html");
+  assert.doesNotMatch(html,/Как объяснить детям|Примеры команд|id="rules"|id="teams"|data-team-list|id="host-plan"/);
+  assert.match(html,/href="\/play.html"/);
+  for(const id of ["control","images","quest-list","quest-qr","task"])assert.ok(html.includes('id="'+id+'"'));
+  const title={},summary={},document={
+    body:{classList:{contains:value=>value==="preview-page"}},
+    querySelector:selector=>({"#game-title":title,"#game-summary":summary}[selector])
+  };
+  vm.runInNewContext(await read("dist/assets/game-page.js"),{window:content.window,document});
+  assert.equal(title.textContent,content.window.HALLOWEEN_GAME.title);
+  assert.equal(summary.textContent,content.window.HALLOWEEN_GAME.duration);
+});
+
 test("creation screen sends the selected team count to the server and renders exactly those slots", async () => {
   const client=await read("dist/assets/room-client.js"),ui=await read("dist/assets/room-ui.js");
   for(const count of [1,2,8]) {
@@ -77,16 +99,16 @@ test("shared score cards, explicit reward reasons and host-only help are visible
   window.RoomUI.render(root,view(r,"host"),handlers,draft);
   assert.ok(root.all().some(el=>el.className==="team-score" && el.textContent==="50"));
   assert.ok(root.all().some(el=>el.textContent?.includes("Поделились подсказкой")));
-  await root.all().find(el=>el.textContent==="🦇 Мыши +100").click();
+  await root.all().find(el=>el.textContent==="Мыши +100").click();
   assert.equal(r.scores.bats,150);
   window.RoomUI.render(root,view(r,"host"),handlers,draft);
-  assert.equal(root.all().find(el=>el.textContent==="🦇 Мыши ✓").disabled,true);
+  assert.equal(root.all().find(el=>el.textContent==="Мыши ✓").disabled,true);
   window.RoomUI.render(root,view(r,"bats"),handlers,draft);
   assert.equal(root.all().some(el=>el.className?.includes("help-bonus")),false);
   const toast=new Element();
   window.RoomUI.showReward(toast,r.scoreEvents,view(r,"bats").teams,"bats");
   assert.equal(toast.hidden,false);
-  assert.ok(toast.all().some(el=>el.textContent==="🦇 Мыши: +150"));
+  assert.ok(toast.all().some(el=>el.textContent==="Мыши: +150"));
   assert.ok(toast.all().some(el=>el.textContent?.includes("отметил ведущий")));
 });
 
@@ -122,8 +144,8 @@ test("public cards keep IDs/media and never ship private clues or solutions; no 
   const tasks=content.window.HALLOWEEN_TASKS;
   assert.deepEqual(Array.from(tasks,t=>t.id),ROUNDS.map(r=>r.id));
   for (const task of tasks) {
-    const round=ROUNDS.find(r=>r.id===task.id);
-    assert.equal(task.title,round.title); assert.equal(task.text,round.goal); assert.ok(task.image);
+    assert.ok(task.title&&task.text&&task.description&&task.image);
+    assert.equal(task.video,"../assets/videos/quest-"+String(task.id).padStart(2,"0")+".mp4");
     assert.equal("clues" in task,false); assert.equal("solution" in task,false);
   }
   assert.equal(tasks.filter(t=>t.video).length,8);
