@@ -11,7 +11,9 @@ with zipfile.ZipFile(root / 'halloween-site-8.zip', 'w', zipfile.ZIP_DEFLATED) a
     for source in sorted((root / 'publish').rglob('*')):
         if source.is_file():
             archive.write(source, arcname=source.relative_to(root).as_posix())
-    for source in sorted((root / 'server').glob('*.mjs')):
+    for source in sorted((root / 'server').iterdir()):
+        if not source.is_file() or source.suffix not in {'.mjs', '.json'}:
+            continue
         archive.write(source, arcname=source.relative_to(root).as_posix())
     for name in ['wrangler.jsonc', 'GAME-PLAN.md']:
         archive.write(root / name, arcname=name)

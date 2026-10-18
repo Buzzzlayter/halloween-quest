@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRoom, joinRoom, authorize, act, dispatch, view, GameError } from "../server/game-engine.mjs";
+import { createRoom, joinRoom, authorize, act, dispatch, view, GameError } from "../server/legacy-engine.mjs";
 import { ROUNDS, TEAMS } from "../server/scenario.mjs";
+import { roomLimits, teamCatalogue, teamsFor, roundsFor } from "../server/room-scenario.mjs";
 const roles = TEAMS.map(team => team.id);
 const room = () => {
   const r = createRoom("123456");
@@ -15,6 +16,89 @@ function propose(r, items = ROUNDS[r.roundIndex].solution) {
 }
 const agree = r => { for (const role of roles.filter(role => role !== ROUNDS[r.roundIndex].captain)) action(r, role, "vote", { proposalId: r.proposal.id, approve: true }); };
 const blocked = fn => assert.throws(fn, GameError);
+
+test("room size is an integer from one to the current card count, never a client-only limit", () => {
+  assert.equal(roomLimits().maxTeams,ROUNDS.length);
+  for (const value of [0,-1,ROUNDS.length+1,2.5,"2",null,NaN,Infinity]) blocked(()=>createRoom("123456",Date.now(),undefined,value));
+  for (let count=2;count<=ROUNDS.length;count++) {
+    const r=createRoom("123456",Date.now(),undefined,count);
+    assert.equal(Object.keys(r.members).length,count);
+    assert.equal(view(r,"host").teams.length,count);
+    assert.equal(view(r,"host").teamCount,count);
+    assert.equal(new Set(r.teams.map(t=>t.id)).size,count);
+    assert.equal(Object.keys(view(r,"host").invites).length,count);
+  }
+});
+
+test("every allowed room size completes the entire scenario with no phantom teams, clues or ritual steps", () => {
+  for (let count=2;count<=ROUNDS.length;count++) {
+    const r=createRoom("123456",Date.now(),undefined,count),active=r.teams.map(t=>t.id);
+    for (const role of active.slice(0,-1)) joinRoom(r,role,r.members[role].invite);
+    blocked(()=>action(r,"host","start"));
+    const last=active.at(-1);joinRoom(r,last,r.members[last].invite);
+    action(r,"host","start");
+    for (const round of r.rounds) {
+      assert.deepEqual(Object.keys(round.clues).sort(),[...active].sort());
+      assert.ok(active.includes(round.captain));
+      for (const role of active) {
+        assert.ok(view(r,role).clue.text);
+        action(r,role,"ready");
+      }
+      if(round.memory) for(const role of active) assert.equal(view(r,role).clue,null);
+      action(r,round.captain,"propose",{items:round.solution});
+      const proposalId=r.proposal.id;
+      const voters=active.filter(id=>id!==round.captain);
+      for(const role of voters.slice(0,-1)) action(r,role,"vote",{proposalId,approve:true});
+      assert.equal(r.phase,"vote","The last active team must be required");
+      action(r,voters.at(-1),"vote",{proposalId,approve:true});
+      if(round.activationOrder) {
+        assert.deepEqual([...round.activationOrder].sort(),[...active].sort());
+        for(const role of round.activationOrder) action(r,role,"activate");
+      }
+      assert.equal(r.phase,"solved");
+      action(r,"host","next");
+    }
+    assert.equal(r.phase,"finished");
+    assert.equal(r.sparks.length,ROUNDS.length);
+    assert.ok(view(r,"host").teams.every(t=>t.score===2900));
+  }
+});
+
+test("smaller rooms combine all base facts, absent roles are rejected and legacy rooms keep four teams", () => {
+  const r=createRoom("123456",Date.now(),undefined,2);
+  const inactive=teamCatalogue().find(team=>!r.members[team.id]).id;
+  blocked(()=>joinRoom(r,inactive,"anything"));
+  blocked(()=>authorize(r,"invalid".repeat(8)));
+  action(r,"host","setTestMode",{enabled:true});
+  blocked(()=>dispatch(r,"host","ready",{roundIndex:0,asTeam:inactive}));
+  action(r,"host","start");
+  const allFacts=r.teams.map(team=>view(r,team.id).clue.text).join(" ");
+  for(const clue of Object.values(ROUNDS[0].clues)) assert.ok(allFacts.includes(clue.text));
+  const legacy=createRoom("654321");delete legacy.teams;delete legacy.rounds;
+  for(const role of roles) joinRoom(legacy,role,legacy.members[role].invite);
+  action(legacy,"host","start");
+  assert.equal(view(legacy,"host").teams.length,4);
+  assert.equal(view(legacy,"ghosts").round.captain,"ghosts");
+});
+
+test("team count in an existing room is frozen even as new cards and team names are added", () => {
+  const r=createRoom("123456",Date.now(),undefined,8);
+  const snapshot=JSON.parse(JSON.stringify(r));
+  assert.deepEqual(teamsFor(snapshot),r.teams);
+  assert.deepEqual(roundsFor(snapshot),r.rounds);
+  assert.ok(r.rounds.every(round=>Object.keys(round.clues).length===8));
+  const next=JSON.parse(JSON.stringify(ROUNDS[0]));next.id=9001;next.title="Новый этап";
+  const total=ROUNDS.length;
+  ROUNDS.push(next);
+  try {
+    assert.equal(roomLimits().maxTeams,total+1);
+    const expanded=createRoom("654321",Date.now(),undefined,total+1);
+    assert.equal(expanded.teams.length,total+1);
+    assert.equal(expanded.rounds[7].solution.length,total+1);
+    assert.equal(view(snapshot,"host").total,total);
+    assert.equal(view(snapshot,"host").teamCount,8);
+  } finally { ROUNDS.pop(); }
+});
 
 test("non-captains earn visible points for sharing and checking; retries/veto cannot farm rewards", () => {
   const r=room(); action(r,"host","start");

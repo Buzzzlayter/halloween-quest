@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import qrcode from "qrcode-generator";
-import { GameError, createRoom, joinRoom, authorize, dispatch, view } from "./game-engine.mjs";
-import { TEAMS } from "./scenario.mjs";
+import { GameError, createRoom, validateTeamCount, validateScoring, flowConfig, joinRoom, authorize, dispatch, view } from "./game-engine.mjs";
+import { teamsFor } from "./room-scenario.mjs";
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: {
   "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"
@@ -12,7 +12,7 @@ async function readJson(request) {
   while (true) {
     const { done, value } = await reader.read(); if (done) break;
     size += value.byteLength;
-    if (size > 8192) { await reader.cancel(); throw new GameError("Слишком большой запрос.", 413); }
+    if (size > 32768) { await reader.cancel(); throw new GameError("Слишком большой запрос.", 413); }
     chunks.push(value);
   }
   const bytes = new Uint8Array(size); let offset = 0;
@@ -47,7 +47,7 @@ export class QuestRoom extends DurableObject {
       if (command === "create" && request.method === "POST") {
         if (this.room) return json({ error: "occupied" }, 409);
         const data = await readJson(request);
-        this.room = createRoom(data.code);
+        this.room = createRoom(data.code, Date.now(), undefined, data.teamCount, {scoring:data.scoring});
         await this.ctx.storage.put("room", this.room);
         await this.ctx.storage.setAlarm(this.room.expiresAt);
         return json({ code: this.room.code, role: "host", token: this.room.hostToken });
@@ -69,7 +69,7 @@ export class QuestRoom extends DurableObject {
       }
       if (command === "qr" && request.method === "GET") {
         if (role !== "host") throw new GameError("QR-приглашения открывает ведущий.", 403);
-        const team = part[4]; if (!TEAMS.some(item => item.id === team)) throw new GameError("Команда не найдена.", 404);
+        const team = part[4]; if (!teamsFor(this.room).some(item => item.id === team)) throw new GameError("Команда не найдена в этой комнате.", 404);
         const inviteUrl = new URL("/play.html", url.origin);
         inviteUrl.searchParams.set("room", this.room.code);
         inviteUrl.searchParams.set("team", team);
@@ -93,19 +93,23 @@ export default {
       if (request.method === "POST" && request.headers.has("Origin") && request.headers.get("Origin") !== url.origin) {
         return json({ error: "Откройте игру на её основном сайте." }, 403);
       }
-      if (url.pathname === "/api/health" && request.method === "GET") return json({ ok: true, game: "shared-clues-v1" });
+      if (url.pathname === "/api/health" && request.method === "GET") return json({ ok: true, game: "quest-flow-v2", legacyRooms: true });
+      if (url.pathname === "/api/config" && request.method === "GET") return json(flowConfig());
       if (url.pathname === "/api/rooms" && request.method === "POST") {
+        const data = await readJson(request);
+        const teamCount = validateTeamCount(data.teamCount);
+        const scoring = validateScoring(data.scoring);
         for (let i = 0; i < 3; i++) {
           const code = String(100000 + crypto.getRandomValues(new Uint32Array(1))[0] % 900000);
           const stub = env.QUEST_ROOMS.get(env.QUEST_ROOMS.idFromName(code));
           const response = await stub.fetch(new Request(new URL(`/api/rooms/${code}/create`, url.origin), {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code })
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, teamCount, scoring })
           }));
           if (response.status !== 409) return response;
         }
         return json({ error: "Не удалось создать комнату. Попробуйте ещё раз." }, 503);
       }
-      const match = url.pathname.match(/^\/api\/rooms\/(\d{6})\/(state|join|action|qr\/(?:pumpkins|bats|ghosts|mages))$/);
+      const match = url.pathname.match(/^\/api\/rooms\/(\d{6})\/(state|join|action|qr\/[a-z][a-z0-9-]{0,63})$/);
       if (!match) return json({ error: "Адрес игры не найден." }, 404);
       return await env.QUEST_ROOMS.get(env.QUEST_ROOMS.idFromName(match[1])).fetch(request);
     } catch (error) { return failure(error); }

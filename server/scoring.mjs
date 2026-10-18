@@ -1,4 +1,4 @@
-import { ROUNDS } from "./scenario.mjs";
+import { roundsFor } from "./room-scenario.mjs";
 // One reward per kind/team/round, persisted with the room to prevent click farming.
 export const REWARDS = {
   clue: { points: 50, label: "Поделились подсказкой" },
@@ -10,7 +10,7 @@ export const REWARDS = {
 };
 export const rewardKey = (roundId, team, kind) => `${roundId}:${team}:${kind}`;
 export function award(room, team, kind, now) {
-  const roundId = ROUNDS[room.roundIndex].id;
+  const roundId = roundsFor(room)[room.roundIndex].id;
   const key = rewardKey(roundId, team, kind);
   room.scoreAwards ||= {};
   if (room.scoreAwards[key]) return false;

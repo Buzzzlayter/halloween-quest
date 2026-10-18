@@ -699,7 +699,7 @@ summary:focus-visible,
 .room-rule { border-left: 3px solid #d2a3f3; padding: 10px 14px; margin: 18px 0; background: #c693ed0b; border-radius: 0 12px 12px 0; }
 .room-rule strong { color: #dfbcf7; font-size: .85rem; }
 .room-rule p { margin: 5px 0 0; font-size: .95rem; }
-.room-roster { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.room-roster { display: grid; grid-template-columns: repeat(var(--team-columns,4),minmax(0,1fr)); gap: 6px; }
 .room-roster-team { display: grid; justify-items: center; gap: 3px; padding: 8px 3px; background: #21162d; border: 1px solid var(--line); border-radius: 12px; color: var(--team-accent); font: inherit; min-width: 0; }
 button.room-roster-team { cursor: pointer; }
 .room-roster-team > span { font-size: 1.7rem; }
@@ -759,12 +759,27 @@ button.room-roster-team { cursor: pointer; }
 .room-end-icon { font-size: 6rem; }
 .shared-spark { font-size: 6rem; color: #ffd582; text-shadow: 0 0 40px #ffb94f; text-align: center; animation: shared-glow 1.8s ease-in-out infinite alternate; }
 .room-foot { text-align: center; padding: 20px 0; }
-.room-test-toggle { display: flex; align-items: center; gap: 10px; padding: 14px; background: #453522; border: 1px solid #a37c40; border-radius: 12px; cursor: pointer; color: #ffe1a8; }
-.room-test-toggle input { width: 22px; height: 22px; margin: 0; accent-color: #ffbd65; flex: 0 0 auto; }
-.room-test-banner { padding: 10px 14px; background: #453522; border: 1px solid #a37c40; border-radius: 12px; color: #ffe1a8; font-size: .85rem; }
-.room-test-controls { position: sticky; top: 6px; z-index: 6; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; background: #130d1ef5; border: 1px solid #a37c40; border-radius: 14px; }
-.room-test-controls .action-button { min-height: 40px; padding: 8px 10px; font-size: .78rem; }
-.room-test-controls [aria-pressed="true"] { color: #ffe1a8; border-color: #ffbd65; background: #453522; }
+.flow-scoring { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 16px 0; }
+.flow-score-field { display: grid; gap: 8px; color: #e7d5f3; font-size: .82rem; line-height: 1.4; }
+.flow-score-field input, .room-panel textarea, .flow-code { box-sizing: border-box; width: 100%; border: 1px solid #846699; border-radius: 12px; padding: 12px; color: #fff0d7; background: #100a1a; font: inherit; min-height: 48px; }
+.room-panel textarea { display: block; resize: vertical; line-height: 1.6; margin: 10px 0; }
+.flow-question { display: block; font-weight: 650; color: #ffe5bc; line-height: 1.55; margin-top: 22px; }
+.flow-code { font-size: 1.7rem; letter-spacing: .12em; margin: 12px 0; }
+.flow-cleared { color: #b5efbe; font-size: 1.3rem; font-weight: 700; }
+.flow-hints,.flow-thanks,.flow-team-review { margin: 20px 0 0; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.flow-hints summary,.flow-thanks summary,.flow-team-review summary { cursor: pointer; color: #f7dcaf; line-height: 1.5; }
+.flow-hints h3,.flow-team-review h3 { font-size: 1rem; color: #d9b8ef; margin-top: 20px; }
+.flow-submitted { padding: 10px; background: #ffffff09; border-radius: 8px; white-space: pre-wrap; }
+.flow-video-wrap { position: relative; margin: 16px 0; border: 1px solid #7b608e; border-radius: 18px; overflow: hidden; background: #090610; }
+.flow-video { display: block; width: 100%; height: clamp(260px,48svh,520px); object-fit: contain; }
+.flow-video-control { position: absolute; right: 14px; bottom: 48px; display: grid; place-items: center; width: 48px; height: 48px; padding: 10px; border-radius: 50%; border: 1px solid #ffffff77; background: #140d20dd; color: white; cursor: pointer; }
+.flow-video-control svg { width: 26px; height: 26px; }
+.flow-video-note { padding: 8px 12px; margin: 0; color: #cbbbd8; font-size: .75rem; }
+.room-setup { display: grid; gap: 10px; margin: 22px 0 4px; }
+.room-setup label { color: #ffe1a8; font-weight: 650; }
+.room-setup select { width: 100%; min-height: 52px; padding: 10px 14px; border: 1px solid #9575b1; border-radius: 12px; color: #fff0d7; background: #160e20; font: inherit; font-size: 1.2rem; }
+.room-setup p { margin: 0; }
+.room-notice { padding: 10px 14px; background: #453522; border: 1px solid #a37c40; border-radius: 12px; color: #ffe1a8; font-size: .85rem; }
 .text-button { color: var(--muted); background: transparent; border: 0; padding: 10px; font: inherit; font-size: .85rem; cursor: pointer; }
 .room-close { margin-top: 24px; color: var(--muted); font-size: .8rem; }
 .room-close > button { margin-top: 12px; }

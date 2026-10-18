@@ -4,9 +4,66 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { ROUNDS } from "../server/scenario.mjs";
-import { createRoom, joinRoom, act, dispatch, view } from "../server/game-engine.mjs";
+import { createRoom, joinRoom, act, dispatch, view } from "../server/legacy-engine.mjs";
 const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const content = { window: {} }; vm.runInNewContext(await read("dist/assets/tasks.js"), content);
+
+test("creation screen sends the selected team count to the server and renders exactly those slots", async () => {
+  const client=await read("dist/assets/room-client.js"),ui=await read("dist/assets/room-ui.js");
+  for(const count of [1,2,8]) {
+    const ids=["room-app","room-message","room-code","room-role","room-reward","leave-room","invite-dialog","invite-image","invite-loading","invite-title","invite-link","copy-invite"];
+    const nodes=new Map(ids.map(id=>[id,new Element()]));
+    const root=nodes.get("room-app"),storage=new Map();let created,posted;
+    const document={hidden:false,createElement:tag=>new Element(tag),addEventListener(){},
+      getElementById:id=>nodes.get(id)||root.all().find(el=>el.id===id)};
+    const window={location:{search:"",origin:"http://example.test"},history:{replaceState(){}},confirm:()=>true,
+      setTimeout:()=>1,clearTimeout(){},localStorage:{getItem:key=>storage.get(key),setItem:(key,val)=>storage.set(key,val),removeItem:key=>storage.delete(key)}};
+    const fetch=async(path,options)=>{
+      let data;
+      if(path==="/api/config")data={minTeams:1,maxTeams:8,defaultTeams:4};
+      else if(path==="/api/rooms") {
+        posted=JSON.parse(options.body);
+        created=createRoom("123456",Date.now(),undefined,posted.teamCount);
+        data={code:created.code,role:"host",token:created.hostToken};
+      } else data=view(created,"host");
+      return {ok:true,status:200,json:async()=>data};
+    };
+    const context=vm.createContext({window,document,fetch,URL,URLSearchParams,AbortController});
+    vm.runInContext(ui,context);await vm.runInContext(client,context);
+    document.getElementById("room-size").value=String(count);
+    await root.all().find(el=>el.textContent==="Создать игру ведущего").click();
+    assert.equal(posted.teamCount,count);
+    assert.equal(root.all().filter(el=>el.className==="invite-card").length,count);
+    assert.equal(JSON.parse(storage.get("halloween-room-session-v1")).role,"host");
+  }
+});
+
+test("room setup derives the slot picker from server limits, including future added cards", async () => {
+  const window={},document={createElement:tag=>new Element(tag)};
+  vm.runInNewContext(await read("dist/assets/room-ui.js"),{window,document});
+  const setup=window.RoomUI.roomSetup({minTeams:1,maxTeams:8,defaultTeams:4});
+  const select=setup.all().find(el=>el.tagName==="select");
+  assert.equal(select.name,"teamCount");assert.equal(select.value,"4");
+  assert.deepEqual(select.children.map(el=>el.value),["1","2","3","4","5","6","7","8"]);
+  const expanded=window.RoomUI.roomSetup({minTeams:1,maxTeams:9,defaultTeams:4});
+  assert.equal(expanded.all().find(el=>el.tagName==="select").children.at(-1).value,"9");
+});
+
+test("legacy lobbies render only their selected slots without test controls", async () => {
+  const window={},document={createElement:tag=>new Element(tag)};
+  vm.runInNewContext(await read("dist/assets/room-ui.js"),{window,document});
+  for(const count of [1,2,8]) {
+    const r=createRoom("123456",Date.now(),undefined,count),root=new Element();
+    const handlers={redraw(){},act(){},invite(){},newGame(){}};
+    window.RoomUI.render(root,view(r,"host"),handlers,{items:[]});
+    assert.equal(root.all().filter(el=>el.className==="invite-card").length,count);
+    for(const team of r.teams)joinRoom(r,team.id,r.members[team.id].invite);
+    act(r,"host","start",{roundIndex:0});
+    window.RoomUI.render(root,view(r,"host"),handlers,{items:[]});
+    assert.equal(root.all().some(el=>el.type==="checkbox"||el.className==="room-test-controls"),false);
+    assert.equal(root.all().filter(el=>el.className==="room-roster-team").length,count);
+  }
+});
 
 test("shared score cards, explicit reward reasons and host-only help are visible", async () => {
   const window={}, document={createElement:tag=>new Element(tag)};
@@ -33,42 +90,16 @@ test("shared score cards, explicit reward reasons and host-only help are visible
   assert.ok(toast.all().some(el=>el.textContent?.includes("отметил ведущий")));
 });
 
-test("host checkbox enables rehearsal start and role tabs drive genuine team controls on one screen", async () => {
-  const window={}, document={createElement:tag=>new Element(tag)};
+test("legacy lobby has no test checkbox and waits for ordinary team connections", async () => {
+  const window={},document={createElement:tag=>new Element(tag)};
   vm.runInNewContext(await read("dist/assets/room-ui.js"),{window,document});
-  const r=createRoom("123456"),root=new Element(),draft={items:[]};
-  const redraw=()=>window.RoomUI.render(root,view(r,"host"),handlers,draft);
-  const handlers={redraw,invite(){},newGame(){},act(name,data={}) {
-    const asTeam=draft.testRole && draft.testRole!=="host" ? draft.testRole : undefined;
-    dispatch(r,"host",name,{roundIndex:r.roundIndex,...data,asTeam}); redraw();
-  }};
-  redraw();
+  const r=createRoom("123456"),root=new Element(),handlers={redraw(){},invite(){},newGame(){},act(){}};
+  window.RoomUI.render(root,view(r,"host"),handlers,{items:[]});
+  assert.equal(root.all().some(el=>el.type==="checkbox"),false);
   assert.equal(root.all().find(el=>el.textContent==="Все в сборе — начать").disabled,true);
-  const check=root.all().find(el=>el.type==="checkbox");
-  assert.equal(check.checked,false); check.checked=true; await check.listeners.change();
-  assert.equal(root.all().find(el=>el.textContent==="Начать тест").disabled,false);
-  await root.all().find(el=>el.textContent==="Начать тест").click();
-  for (const role of ["pumpkins","bats","ghosts","mages"]) {
-    const team=view(r,"host").teams.find(t=>t.id===role);
-    await root.all().find(el=>el.tagName==="button" && el.textContent===team.icon+" "+team.name).click();
-    assert.equal(draft.testRole,role);
-    await root.all().find(el=>el.textContent==="Поделились подсказкой — готовы").click();
-  }
-  assert.equal(r.phase,"answer");
-  await root.all().find(el=>el.tagName==="button" && el.textContent==="👻 Привидения").click();
-  const choice=root.all().find(el=>el.className==="picture-choice" && el.attributes["aria-label"].startsWith("Четвёртый дух"));
-  await choice.click();
-  await root.all().find(el=>el.textContent==="Предложить командам").click();
-  assert.equal(r.phase,"vote");
-  for (const role of ["pumpkins","bats","mages"]) {
-    const team=view(r,"host").teams.find(t=>t.id===role);
-    await root.all().find(el=>el.tagName==="button" && el.textContent===team.icon+" "+team.name).click();
-    await root.all().find(el=>el.textContent==="Согласны").click();
-  }
-  assert.equal(r.phase,"solved");
-  await root.all().find(el=>el.tagName==="button" && el.textContent==="🎩 Ведущий").click();
-  await root.all().find(el=>el.textContent==="Обсудили — следующий этап").click();
-  assert.equal(r.roundIndex,1);
+  for(const team of r.teams)joinRoom(r,team.id,r.members[team.id].invite);
+  window.RoomUI.render(root,view(r,"host"),handlers,{items:[]});
+  assert.equal(root.all().find(el=>el.textContent==="Все в сборе — начать").disabled,false);
 });
 class Element {
   constructor(tag="div") {

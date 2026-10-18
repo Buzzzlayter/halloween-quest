@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import sharp from "sharp";
 import qrcode from "qrcode-generator";
 import { ROUNDS, TEAMS } from "../server/scenario.mjs";
+import FLOW from "../server/quest-flow.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const source = path.join(root, "dist");
@@ -65,6 +66,10 @@ for (const task of tasks) {
 }
 if (tasks.length !== ROUNDS.length || TEAMS.length !== teamIds.size) throw new Error("Scenario/public content count mismatch");
 const embeddedTasks = `window.HALLOWEEN_TASKS = ${JSON.stringify(tasks)};\nwindow.HALLOWEEN_GAME = ${JSON.stringify(game)};`;
+const embeddedMedia = `window.HALLOWEEN_MEDIA = ${JSON.stringify(tasks.map(t=>({id:t.id,title:t.title,video:t.video,poster:t.videoPoster||t.image})))};`;
+for(const stage of FLOW.stages) for(const id of [...(stage.videoIds||[]),...(stage.questions||[]).map(q=>q.videoId).filter(Boolean)]) {
+  if(!tasks.some(t=>t.id===id&&t.video))throw new Error(`Missing reward video ${id}`);
+}
 let css = await readFile(path.join(source, "assets/styles.css"), "utf8");
 const displayFont = await readFile(path.join(source, "assets/fonts/RuslanDisplay-Regular.ttf"));
 const fontLicense = await readFile(path.join(source, "assets/fonts/OFL-Ruslan-Display.txt"), "utf8");
@@ -73,9 +78,9 @@ css = `/* Ruslan Display font license\n${fontLicense.replace(/\*\//g, "* /")}\n*
 async function bundlePage(filename) {
   let page = await readFile(path.join(source, filename), "utf8");
   page = page.replace('<link rel="stylesheet" href="assets/styles.css" />', () => `<style>\n${css}\n</style>`);
-  for (const name of ["tasks", "game-page", "control-panel", "task-page", "room-ui", "room-client"]) {
+  for (const name of ["tasks", "media", "game-page", "control-panel", "task-page", "room-ui", "flow-ui", "room-client"]) {
     if (!page.includes(`<script src="assets/${name}.js"></script>`)) continue;
-    const js = name === "tasks" ? embeddedTasks : await readFile(path.join(source, `assets/${name}.js`), "utf8");
+    const js = name === "tasks" ? embeddedTasks : name === "media" ? embeddedMedia : await readFile(path.join(source, `assets/${name}.js`), "utf8");
     page = page.replace(`<script src="assets/${name}.js"></script>`, () => `<script>\n${js.replace(/<\/script/gi, "<\\/script")}\n</script>`);
   }
   return page;
@@ -97,11 +102,7 @@ const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
 const printTeams = game.teams.map(team => `<li><strong>${escapeHtml(team.icon)} ${escapeHtml(team.name)}.</strong> ${escapeHtml(team.role)}</li>`).join("\n");
-const printCards = ROUNDS.map((round, index) => `<section class="game-panel print-quest">
-<p class="task-kicker">Этап ${index + 1} из ${ROUNDS.length}</p><h2>${escapeHtml(round.title)}</h2>
-<p>${escapeHtml(round.story)}</p><p><strong>Цель.</strong> ${escapeHtml(round.goal)}</p>
-<p><strong>Правило.</strong> ${escapeHtml(round.rule)}</p>
-</section>`).join("\n");
+const printCards = FLOW.stages.map((stage,index)=>`<section class="game-panel print-quest"><p class="task-kicker">Этап ${index+1} из ${FLOW.stages.length}</p><h2>${escapeHtml(stage.title)}</h2><p>${escapeHtml(stage.prompt)}</p>${(stage.questions||[]).map(q=>`<p>${escapeHtml(q.prompt)}</p>`).join("")}<p>${stage.type==="code"?"Код проверяется автоматически. Сам код доступен только ведущему в комнате.":"Ответы проверяются по допустимым вариантам. Число засчитанных ответов видно ведущему."}</p></section>`).join("\n");
 const hostHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>План ведущего — ${escapeHtml(game.title)}</title><style>${css}
 @media print { body { color: #111; background: white; } body::before { display: none; }
@@ -109,9 +110,9 @@ const hostHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><me
 .print-quest { break-inside: avoid; } h1, h2, .task-kicker { color: #111; text-shadow: none; } }
 </style></head><body class="preview-page"><main class="preview-shell">
 <a href="./">← Ведущему</a><section class="game-panel"><h1>${escapeHtml(game.title)}</h1><p>${escapeHtml(game.duration)}</p>
-<p>${escapeHtml(game.opening)}</p><h2>Подготовка</h2><p>Четыре смешанные по возрасту команды, по телефону на команду и телефон ведущего. Нужен интернет. Другой реквизит не нужен. Создайте общую игру и покажите каждой команде её QR. Подсказки и решения ведущего доступны только внутри комнаты.</p>
+<p>${escapeHtml(game.opening)}</p><h2>Подготовка</h2><p>От двух команд, по телефону на команду и телефон ведущего. Число слотов выбирается при создании комнаты; максимум равен числу карточек. Нужен интернет. Другой реквизит не нужен. Создайте общую игру и покажите каждой команде её QR. Подсказки и решения ведущего доступны только внутри комнаты.</p>
 <h2>Объяснение детям</h2><ul>${game.rules.map(rule => `<li>${escapeHtml(rule)}</li>`).join("")}</ul><h2>Команды</h2><ul>${printTeams}</ul>
-<p>На этап примерно 4–6 минут, но таймера нет. Между этапами смените посланников и обсудите, чья подсказка помогла. Малыши ищут символы, старшие читают и передают сообщения. Двигайтесь только в безопасной части двора, на виду у взрослых.</p>
+<p>Каждая команда проходит этапы независимо. Ведущий наблюдает за прогрессом и настраивает очки. Малышам помогают старшие. Демо-вопросы и коды заменяются в server/quest-flow.json. Двигайтесь только в безопасной части двора, на виду у взрослых.</p>
 <p>${escapeHtml(game.finale)}</p></section>${printCards}</main></body></html>`;
 await writeFile(path.join(output, "game-cards.html"), hostHtml, "utf8");
 console.log(`Prepared ${tasks.length} public cards and synchronized play.html; room logic stays in the Worker.`);

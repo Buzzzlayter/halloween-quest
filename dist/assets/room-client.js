@@ -6,7 +6,7 @@
   const storageKey = "halloween-room-session-v1";
   const params = new URLSearchParams(window.location.search);
   let session = null, state = null, draft = { items: [] }, pending = false, polling = false, timer, qrBlob;
-  let inviteRequest = 0, rewardTimer;
+  let inviteRequest = 0, rewardTimer, roomConfig = null, welcomeRequest = 0, displayingWelcome = false;
   function tell(text, error = true) { message.textContent = text; message.hidden = !text; message.className = error ? "room-message" : "room-message room-success"; }
   function saveSession(value) {
     session = value;
@@ -15,7 +15,7 @@
   }
   try {
     const saved = JSON.parse(window.localStorage.getItem(storageKey) || "null");
-    if (saved && /^\d{6}$/.test(saved.code) && typeof saved.token === "string" && ["host", "pumpkins", "bats", "ghosts", "mages"].includes(saved.role)) session = saved;
+    if (saved && /^\d{6}$/.test(saved.code) && typeof saved.token === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(saved.role || "")) session = saved;
   } catch {}
 
   async function request(path, body, auth = session) {
@@ -35,10 +35,10 @@
     const changed = !state || state.version !== next.version || state.code !== next.code;
     const lastReward = state?.scoreEvents?.at(-1)?.id || 0;
     const freshRewards = state?.code === next.code ? (next.scoreEvents || []).filter(event => event.id > lastReward) : [];
-    if (!state || state.roundIndex !== next.roundIndex || (state.proposal && !next.proposal)) draft = { items: [], testRole: draft.testRole };
+    if (!state || state.roundIndex !== next.roundIndex || (state.proposal && !next.proposal)) draft = { items: [] };
     state = next;
     if (freshRewards.length) {
-      const role = state.role === "host" && state.testMode && draft.testRole ? draft.testRole : state.role;
+      const role = state.role;
       window.RoomUI.showReward(get("room-reward"), freshRewards, state.teams, role);
       window.clearTimeout(rewardTimer);
       rewardTimer = window.setTimeout(() => { get("room-reward").hidden = true; }, 6500);
@@ -51,33 +51,44 @@
     const team = state.teams.find(team => team.id === state.role);
     get("room-role").textContent = team ? team.icon + " " + team.name : "Ведущий";
     get("leave-room").hidden = false;
+    const focused=document.activeElement;
+    const focusState=focused?.id ? {id:focused.id,start:focused.selectionStart,end:focused.selectionEnd} : null;
+    const opened=[...(root.querySelectorAll?.("details[open]")||[])].map(el=>el.id).filter(Boolean);
+    const closed=[...(root.querySelectorAll?.("details:not([open])")||[])].map(el=>el.id).filter(Boolean);
     window.RoomUI.render(root, state, { act: action, redraw: draw, invite: showInvite, newGame }, draft);
+    for(const id of opened) { const details=get(id); if(details)details.open=true; }
+    for(const id of closed) { const details=get(id); if(details)details.open=false; }
+    if(focusState) {
+      const nextFocus=get(focusState.id);
+      if(nextFocus) { nextFocus.focus({preventScroll:true}); try { nextFocus.setSelectionRange(focusState.start,focusState.end); } catch {} }
+    }
     if (state.role === "host" && state.phase !== "closed") {
       const end = node("details", undefined, "room-close");
+      end.id="room-management";
+      end.open=opened.includes(end.id);
       end.append(node("summary", "Управление комнатой"), button("Завершить эту игру", async () => {
-        if (window.confirm("Завершить игру для всех четырёх команд?")) await action("close");
+        if (window.confirm("Завершить игру для всех команд?")) await action("close");
       }, true)); root.append(end);
     }
   }
   async function action(name, data = {}) {
     if (pending || !session || !state) return;
     pending = true; tell("");
-    const asTeam = name !== "close" && state.role === "host" && state.testMode && draft.testRole && draft.testRole !== "host" ? draft.testRole : undefined;
-    try { accept(await request(`/api/rooms/${session.code}/action`, { ...data, asTeam, action: name, roundIndex: state.roundIndex })); }
+    try { accept(await request(`/api/rooms/${session.code}/action`, { ...data, action: name, roundIndex: state.roundIndex })); }
     catch (error) { tell(error.name === "AbortError" ? "Связь задерживается. Дождитесь обновления, прежде чем повторять действие." : error.message); await poll(); }
     finally { pending = false; draw(); }
   }
   async function poll() {
-    if (!session || polling) return;
+    if (!session || polling || displayingWelcome) return;
     const pollingSession = session;
     polling = true;
     try {
       const next = await request(`/api/rooms/${pollingSession.code}/state`, undefined, pollingSession);
-      if (session !== pollingSession) return;
+      if (session !== pollingSession || displayingWelcome) return;
       accept(next);
       if (message.dataset.network === "true") { tell(""); delete message.dataset.network; }
     } catch (error) {
-      if (session !== pollingSession) return;
+      if (session !== pollingSession || displayingWelcome) return;
       tell(error.name === "AbortError" || !error.status ? "Связь пропала. Игра сохранена; пробуем подключиться снова." : error.message);
       message.dataset.network = "true";
       if ([401, 404, 410].includes(error.status)) { saveSession(null); state = null; welcome(); }
@@ -85,34 +96,53 @@
   }
   function schedule() {
     window.clearTimeout(timer);
+    if (displayingWelcome) return;
     timer = window.setTimeout(async () => {
       if (!document.hidden) await poll();
       schedule();
     }, document.hidden ? 6000 : 2200);
   }
   async function connect() {
+    displayingWelcome = false; welcomeRequest++;
     state = null; draft = { items: [] };
+    root.replaceChildren(node("p", "Подключаемся к игре…"));
     window.clearTimeout(rewardTimer); get("room-reward").hidden = true;
     window.history.replaceState(null, "", "/play.html?room=" + session.code);
     await poll(); schedule();
   }
   async function newGame() {
-    if (pending) return; pending = true; tell("");
-    try { saveSession(await request("/api/rooms", {}, null)); await connect(); }
+    if (pending) return;
+    if (!get("room-size")) { await welcome(); return; }
+    pending = true; tell("");
+    const teamCount = Number(get("room-size").value);
+    const scoring = roomConfig.scoring && window.FlowUI ? window.FlowUI.readScoring("setup-score") : undefined;
+    try { saveSession(await request("/api/rooms", { teamCount, scoring }, null)); await connect(); }
     catch (error) { tell(error.message); }
     finally { pending = false; }
   }
-  function welcome() {
+  async function welcome() {
+    displayingWelcome = true; window.clearTimeout(timer);
+    const currentWelcome = ++welcomeRequest;
     root.replaceChildren();
     get("room-code").textContent = ""; get("room-role").textContent = "";
     const panel = node("section", undefined, "room-panel");
-    panel.append(node("h1", "Тайна погасшего фонаря"), node("p", "Четыре команды, пять телефонов, восемь общих испытаний. У каждой команды своя часть секрета — без переговоров ответ не собрать."));
+    panel.append(node("h1", "Тайна погасшего фонаря"), node("p", "Выберите число команд и награды. Каждая команда проходит вопросы и коды в своём темпе, открывает видео и помогает друзьям подсказками."));
     if (session) panel.append(button("Продолжить игру " + session.code, connect));
-    panel.append(button("Создать игру ведущего", newGame, !!session));
     const note = node("div", undefined, "room-rule");
     note.append(node("strong", "Если вы в команде"), node("p", "Попросите ведущего показать QR вашей команды и отсканируйте его этим телефоном. Другого реквизита не нужно."));
     panel.append(note); root.append(panel);
     get("leave-room").hidden = !session;
+    const loading = node("p", "Загружаем параметры комнаты…", "clue-ask"); panel.append(loading);
+    try {
+      if (!roomConfig) roomConfig = await request("/api/config", undefined, null);
+      if (welcomeRequest !== currentWelcome) return;
+      loading.hidden = true;
+      panel.append(window.RoomUI.roomSetup(roomConfig), button("Создать игру ведущего", newGame, !!session));
+    } catch (error) {
+      if (welcomeRequest !== currentWelcome) return;
+      loading.hidden = true; tell("Не удалось загрузить число слотов. Проверьте интернет и попробуйте снова.");
+      panel.append(button("Повторить", welcome, true));
+    }
   }
 
   async function showInvite(teamId) {
@@ -156,5 +186,5 @@
       await connect();
     } catch (error) { tell(error.message); welcome(); }
   } else if (session && params.get("room") === session.code) await connect();
-  else welcome();
+  else await welcome();
 })();

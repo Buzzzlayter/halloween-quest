@@ -58,6 +58,7 @@
   }
   function roster(state, handlers) {
     const row = node("div", undefined, "room-roster");
+    row.style.setProperty("--team-columns", state.teams.length <= 4 ? state.teams.length : state.teams.length <= 6 ? 3 : 4);
     for (const team of state.teams) {
       const el = node(state.role === "host" ? "button" : "div", undefined, "room-roster-team");
       if (state.role === "host") {
@@ -99,22 +100,23 @@
     details.append(choices); return details;
   }
 
-  function render(root, state, handlers, draft) {
-    root.replaceChildren();
-    if (state.testMode) root.append(node("p", "Тестовый режим · реальные подключения не проверяются", "room-test-banner"));
-    if (state.role === "host" && state.testMode && state.previews && !["lobby", "closed", "finished"].includes(state.phase)) {
-      const selectedRole = draft.testRole || "host";
-      const controls = node("nav", undefined, "room-test-controls");
-      controls.setAttribute("aria-label", "Тест: экран ведущего или команды");
-      for (const role of [{id:"host", name:"Ведущий", icon:"🎩"}, ...state.teams]) {
-        const switcher = button(role.icon + " " + role.name, () => {
-          draft.testRole = role.id; draft.items = []; handlers.redraw();
-        }, true);
-        switcher.setAttribute("aria-pressed", String(selectedRole === role.id)); controls.append(switcher);
-      }
-      root.append(controls);
-      if (selectedRole !== "host" && state.previews[selectedRole]) state = state.previews[selectedRole];
+  function roomSetup(config) {
+    const setup = node("div", undefined, "room-setup");
+    const label = node("label", "Количество слотов команд"); label.htmlFor = "room-size";
+    const select = node("select"); select.id = "room-size"; select.name = "teamCount";
+    for (let count = config.minTeams; count <= config.maxTeams; count++) {
+      const option = node("option", String(count)); option.value = String(count); select.append(option);
     }
+    select.value = String(config.defaultTeams);
+    setup.append(label, select, node("p", `От ${config.minTeams} до ${config.maxTeams} команд — по числу карточек. На каждый слот нужен один телефон; телефон ведущего отдельно.`, "clue-ask"));
+    if(config.scoring && window.FlowUI) setup.append(window.FlowUI.scoringInputs(config.scoring,"setup-score"));
+    if(config.demo) setup.append(node("p","Демосценарий: вопросы → три кода → финальные вопросы. Реальные вопросы, коды и подсказки заменяются в конфигурации.","room-notice"));
+    return setup;
+  }
+
+  function render(root, state, handlers, draft) {
+    if(state.engine === "quest-flow-v2") return window.FlowUI.render(root,state,handlers,draft);
+    root.replaceChildren();
     const host = state.role === "host";
     const own = state.teams.find(team => team.id === state.role);
     const lamp = node("div", undefined, "room-lamp");
@@ -137,32 +139,23 @@
     if (["closed", "finished"].includes(state.phase)) {
       const end = node("section", undefined, "room-panel room-end");
       end.append(node("div", state.phase === "finished" ? "🎃" : "🌙", "room-end-icon"), node("h1", state.phase === "finished" ? "Фонарь Хэллоуина сияет!" : "Комната закрыта"));
-      end.append(node("p", state.phase === "finished" ? "Все четыре команды помогли друг другу. Победа общая!" : "Ведущий завершил эту игру."));
+      end.append(node("p", state.phase === "finished" ? "Все команды помогли друг другу. Победа общая!" : "Ведущий завершил эту игру."));
       if (host) end.append(button("Новая игра", handlers.newGame));
       root.append(end); return;
     }
     if (state.phase === "lobby") {
       const panel = node("section", undefined, "room-panel");
-      panel.append(node("h1", host ? "Подключите четыре команды" : `${own.icon} Вы — ${own.name}`));
+      panel.append(node("h1", host ? `Подключите команды · слотов: ${state.teams.length}` : `${own.icon} Вы — ${own.name}`));
       panel.append(node("p", host ? "Покажите каждой команде её QR. На всю игру достаточно подключиться один раз." : "Обсудите подсказки внутри команды. Малыши ищут символы, старшие передают сообщения. Ждём ведущего."));
       if (host) {
-        const test = node("label", undefined, "room-test-toggle");
-        const check = node("input"); check.type = "checkbox"; check.checked = !!state.testMode;
-        check.addEventListener("change", async () => {
-          check.disabled = true;
-          try { await handlers.act("setTestMode", { enabled: check.checked }); }
-          finally { check.disabled = false; }
-        });
-        test.append(check, node("span", "Тест без телефонов"));
-        panel.append(test, node("p", "Галочка разрешает запуск без подключения команд. Затем можно переключаться между четырьмя командами на этом экране. Для настоящей игры создайте отдельную комнату без галочки.", "clue-ask"));
         const list = node("div", undefined, "invite-grid");
         for (const team of state.teams) {
           const item = node("div", undefined, "invite-card");
           item.style.setProperty("--team-accent", team.accent);
-          item.append(node("strong", `${team.icon} ${team.name}`), node("small", team.joined ? "Подключились ✓" : state.testMode ? "Тест без подключения" : "Ждём телефон"), button("Показать QR", () => handlers.invite(team.id), true));
+          item.append(node("strong", `${team.icon} ${team.name}`), node("small", team.joined ? "Подключились ✓" : "Ждём телефон"), button("Показать QR", () => handlers.invite(team.id), true));
           list.append(item);
         }
-        panel.append(list, button(state.testMode ? "Начать тест" : "Все в сборе — начать", () => handlers.act("start"), false, !state.testMode && !state.teams.every(team => team.joined)));
+        panel.append(list, button("Все в сборе — начать", () => handlers.act("start"), false, !state.teams.every(team => team.joined)));
         const rules = node("div", undefined, "room-rule");
         rules.append(node("strong", "Перед началом"), node("p", "Один телефон у команды, один посланник на этап. Экраны с секретами друг другу не показываем. Посланников меняем. Общий ответ подтверждают все команды."));
         panel.append(rules);
@@ -239,7 +232,7 @@
         const actions = node("div", undefined, "control-actions");
         if (!state.proposal.votes[state.role]) actions.append(button("Согласны", () => handlers.act("vote", { proposalId: state.proposal.id, approve: true })));
         actions.append(button("Нужно обсудить", () => handlers.act("vote", { proposalId: state.proposal.id, approve: false }), true)); panel.append(actions);
-      } else panel.append(node("p", "Ответ проверится после согласия всех четырёх команд."));
+      } else panel.append(node("p", "Ответ проверится после согласия всех команд."));
     }
     if (state.phase === "ritual") {
       const nextTeam = state.teams.find(team => team.id === state.ritual.next);
@@ -259,5 +252,5 @@
     }
     root.append(panel);
   }
-  window.RoomUI = { render, node, button, showReward };
+  window.RoomUI = { render, node, button, showReward, roomSetup };
 })();
