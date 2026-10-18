@@ -7,6 +7,11 @@ import sharp from "sharp";
 import qrcode from "qrcode-generator";
 import { ROUNDS, TEAMS } from "../server/scenario.mjs";
 import FLOW from "../server/quest-flow.json" with { type: "json" };
+import BANK from "../server/task-bank.json" with { type: "json" };
+import TEAM_ART from "../server/team-art.json" with {type:"json"};
+import { validateTaskBank } from "../server/quest-config.mjs";
+import { roomLimits } from "../server/room-scenario.mjs";
+validateTaskBank(FLOW,BANK,roomLimits().maxTeams);
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const source = path.join(root, "dist");
@@ -28,7 +33,8 @@ for (const task of tasks) {
   }
   ids.add(task.id);
   const round = ROUNDS.find(round => round.id === task.id);
-  if (!round || round.title !== task.title || round.goal !== task.text) throw new Error(`Public task ${task.id} does not match the server scenario`);
+  if (!round) throw new Error(`Public task ${task.id} has no compatible legacy ID`);
+  if (![task.title,task.text,task.description].every(value=>typeof value==="string"&&value.trim())) throw new Error(`Public task ${task.id} is missing its story`);
   if (["solution", "clues", "steps"].some(key => key in task)) throw new Error("Private or obsolete task data in public bundle");
   if (task.video && !task.video.startsWith("https://")) {
     const videoSource = path.resolve(source, "task", task.video);
@@ -62,12 +68,15 @@ for (const task of tasks) {
   }
   const bytes = await readFile(destination);
   task.image = `data:image/webp;base64,${bytes.toString("base64")}`;
+  const art = await sharp(original).resize({width:384,height:384,fit:"inside",withoutEnlargement:true}).webp({quality:80}).toBuffer();
+  task.art = `data:image/webp;base64,${art.toString("base64")}`;
   console.log(`Embedded ${fileName}: ${Math.round(bytes.length / 1024)} KB`);
 }
 if (tasks.length !== ROUNDS.length || TEAMS.length !== teamIds.size) throw new Error("Scenario/public content count mismatch");
 const embeddedTasks = `window.HALLOWEEN_TASKS = ${JSON.stringify(tasks)};\nwindow.HALLOWEEN_GAME = ${JSON.stringify(game)};`;
-const embeddedMedia = `window.HALLOWEEN_MEDIA = ${JSON.stringify(tasks.map(t=>({id:t.id,title:t.title,video:t.video,poster:t.videoPoster||t.image})))};`;
-for(const stage of FLOW.stages) for(const id of [...(stage.videoIds||[]),...(stage.questions||[]).map(q=>q.videoId).filter(Boolean)]) {
+for(const [team,id] of Object.entries(TEAM_ART))if(!tasks.some(t=>t.id===id&&t.art))throw new Error(`Missing character art for ${team}`);
+const embeddedMedia = `window.HALLOWEEN_MEDIA = ${JSON.stringify(tasks.map(t=>({id:t.id,title:t.title,video:t.video,poster:t.videoPoster||t.image,art:t.art,teamIds:Object.keys(TEAM_ART).filter(team=>TEAM_ART[team]===t.id)})))};`;
+for(const stage of FLOW.stages) for(const id of [...(stage.videoIds||[]),...(stage.questionVideoIds||[])]) {
   if(!tasks.some(t=>t.id===id&&t.video))throw new Error(`Missing reward video ${id}`);
 }
 let css = await readFile(path.join(source, "assets/styles.css"), "utf8");
@@ -101,8 +110,8 @@ await rm(path.join(output, "editor.html"), { force: true });
 const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
-const printTeams = game.teams.map(team => `<li><strong>${escapeHtml(team.icon)} ${escapeHtml(team.name)}.</strong> ${escapeHtml(team.role)}</li>`).join("\n");
-const printCards = FLOW.stages.map((stage,index)=>`<section class="game-panel print-quest"><p class="task-kicker">Этап ${index+1} из ${FLOW.stages.length}</p><h2>${escapeHtml(stage.title)}</h2><p>${escapeHtml(stage.prompt)}</p>${(stage.questions||[]).map(q=>`<p>${escapeHtml(q.prompt)}</p>`).join("")}<p>${stage.type==="code"?"Код проверяется автоматически. Сам код доступен только ведущему в комнате.":"Ответы проверяются по допустимым вариантам. Число засчитанных ответов видно ведущему."}</p></section>`).join("\n");
+const printTeams = game.teams.map(team => `<li><img class="character-art" src="${tasks.find(t=>t.id===TEAM_ART[team.id]).art}" alt="" width="44" height="44" /><strong>${escapeHtml(team.name)}.</strong> ${escapeHtml(team.role)}</li>`).join("\n");
+const printCards = FLOW.stages.map((stage,index)=>`<section class="game-panel print-quest"><p class="task-kicker">Этап ${index+1} из ${FLOW.stages.length}</p><h2>${escapeHtml(stage.title)}</h2><p>${escapeHtml(stage.story||"")}</p><p>${escapeHtml(stage.prompt)}</p>${stage.type==="questions"?`<p>Каждая команда получает ${stage.questionCount} сюжетных загадки из банка без повторов. Ролики и разбор открываются после отправки при любом результате.</p>`:""}<p>${stage.type==="code"?"Код проверяется автоматически. Сам код доступен только ведущему в комнате.":"Ответы проверяются по допустимым вариантам. Число засчитанных ответов видно ведущему."}</p></section>`).join("\n");
 const hostHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>План ведущего — ${escapeHtml(game.title)}</title><style>${css}
 @media print { body { color: #111; background: white; } body::before { display: none; }
@@ -110,9 +119,9 @@ const hostHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><me
 .print-quest { break-inside: avoid; } h1, h2, .task-kicker { color: #111; text-shadow: none; } }
 </style></head><body class="preview-page"><main class="preview-shell">
 <a href="./">← Ведущему</a><section class="game-panel"><h1>${escapeHtml(game.title)}</h1><p>${escapeHtml(game.duration)}</p>
-<p>${escapeHtml(game.opening)}</p><h2>Подготовка</h2><p>От двух команд, по телефону на команду и телефон ведущего. Число слотов выбирается при создании комнаты; максимум равен числу карточек. Нужен интернет. Другой реквизит не нужен. Создайте общую игру и покажите каждой команде её QR. Подсказки и решения ведущего доступны только внутри комнаты.</p>
+<p>${escapeHtml(game.opening)}</p><h2>Подготовка</h2><p>От одной команды, по телефону на команду и телефон ведущего. Число слотов выбирается при создании комнаты; максимум равен числу карточек. Нужен интернет. Другой реквизит не нужен. Создайте общую игру и покажите каждой команде её QR. Подсказки и решения ведущего доступны только внутри комнаты.</p>
 <h2>Объяснение детям</h2><ul>${game.rules.map(rule => `<li>${escapeHtml(rule)}</li>`).join("")}</ul><h2>Команды</h2><ul>${printTeams}</ul>
-<p>Каждая команда проходит этапы независимо. Ведущий наблюдает за прогрессом и настраивает очки. Малышам помогают старшие. Демо-вопросы и коды заменяются в server/quest-flow.json. Двигайтесь только в безопасной части двора, на виду у взрослых.</p>
+<p>Каждая команда проходит этапы независимо. Ведущий наблюдает за прогрессом и настраивает очки. Малышам помогают старшие. Банк загадок — server/task-bank.json; порядок этапов — server/quest-flow.json. Наборы команд и коды выбираются при создании комнаты. Двигайтесь только в безопасной части двора, на виду у взрослых.</p>
 <p>${escapeHtml(game.finale)}</p></section>${printCards}</main></body></html>`;
 await writeFile(path.join(output, "game-cards.html"), hostHtml, "utf8");
 console.log(`Prepared ${tasks.length} public cards and synchronized play.html; room logic stays in the Worker.`);

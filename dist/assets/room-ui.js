@@ -11,6 +11,24 @@
     el.addEventListener("click", async () => { el.disabled = true; try { await fn(); } finally { el.disabled = disabled; } });
     return el;
   }
+  function questArt(id,className="character-art",alt="") {
+    const media=(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===id);
+    const image=node("img",undefined,className);
+    image.src=media?.art||"assets/images/quest-"+String(id).padStart(2,"0")+".webp";
+    image.alt=alt;image.width=384;image.height=384;image.decoding="async";
+    if(!alt)image.setAttribute("aria-hidden","true");
+    return image;
+  }
+  function teamArt(team,className="character-art") {
+    const id=team.artId||(window.HALLOWEEN_MEDIA||[]).find(m=>m.teamIds?.includes(team.id))?.id;
+    return id?questArt(id,className):node("span",team.name.slice(0,1),className+" character-initial");
+  }
+  function teamLabel(team,text=team.name,tag="span",className="") {
+    const label=node(tag,text,"team-label"+(className?" "+className:""));label.append(teamArt(team));return label;
+  }
+  function teamButton(team,text,fn,quiet=true,disabled=false) {
+    const el=button(text,fn,quiet,disabled);el.className+=" team-button";el.append(teamArt(team));return el;
+  }
   function illustratedOption(option) {
     const [color, hatOrCount, eyesOrLight, sign] = option.badges;
     const emoji = (x,y,text,size=22) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="${size}" font-family="Segoe UI Emoji,Apple Color Emoji,sans-serif">${text}</text>`;
@@ -68,7 +86,7 @@
       }
       el.style.setProperty("--team-accent", team.accent);
       const mark = state.phase === "lobby" ? (team.joined ? "✓" : "…") : (team.approved || team.ready ? "✓" : "…");
-      el.append(node("span", team.icon), node("small", team.name), node("strong", String(team.score || 0), "team-score"),
+      el.append(teamArt(team), node("small", team.name), node("strong", String(team.score || 0), "team-score"),
         node("small", "очков"), node("small", mark === "✓" ? "Готовы ✓" : "…", "team-readiness"));
       if (team.id === state.role) el.setAttribute("aria-current", "true");
       row.append(el);
@@ -80,11 +98,11 @@
     root.replaceChildren();
     const totals = teams.map(team => ({ ...team, gained: events.filter(event => event.team === team.id).reduce((sum, event) => sum + event.points, 0) })).filter(team => team.gained);
     const own = totals.find(team => team.id === role);
-    root.append(node("strong", own ? `${own.icon} ${own.name}: +${own.gained}` : `✨ Команды получили +${totals.reduce((sum, team) => sum + team.gained, 0)}`, "reward-title"));
+    root.append(own?teamLabel(own,`${own.name}: +${own.gained}`,"strong","reward-title"):node("strong",`Команды получили +${totals.reduce((sum, team) => sum + team.gained, 0)}`,"reward-title"));
     root.append(node("p", [...new Set(events.filter(event => !own || event.team === role).map(event => event.label))].join(" · "), "reward-reason"));
     const row = node("div", undefined, "reward-teams");
     for (const team of totals) {
-      const el = node("span", `${team.icon} ${team.name} +${team.gained}`); el.style.setProperty("--team-accent", team.accent); row.append(el);
+      const el = teamLabel(team, `${team.name} +${team.gained}`); el.style.setProperty("--team-accent", team.accent); row.append(el);
     }
     root.append(row); root.hidden = false;
     root.classList.remove("reward-pop");
@@ -96,7 +114,7 @@
     const details = node("details", undefined, "dashboard-details help-bonus");
     details.append(node("summary", "+100 за помощь другой команде"), node("p", "Отметьте команду, которая объяснила подсказку, помогла договориться или заметила ошибку. Один бонус команде за этап.", "clue-ask"));
     const choices = node("div", undefined, "help-bonus-grid");
-    for (const team of state.teams) choices.append(button(`${team.icon} ${team.name} ${team.helpRewarded ? "✓" : "+100"}`, () => handlers.act("helpBonus", { team: team.id }), true, team.helpRewarded));
+    for (const team of state.teams) choices.append(teamButton(team,`${team.name} ${team.helpRewarded ? "✓" : "+100"}`, () => handlers.act("helpBonus", { team: team.id }), true, team.helpRewarded));
     details.append(choices); return details;
   }
 
@@ -132,27 +150,27 @@
       history.append(node("summary", "За что получены очки"));
       for (const event of state.scoreEvents.slice(-12).reverse()) {
         const team = state.teams.find(team => team.id === event.team);
-        history.append(node("p", `${team.icon} ${team.name} +${event.points} · ${event.label}`, "score-history-entry"));
+        history.append(teamLabel(team,`${team.name} +${event.points} · ${event.label}`,"p","score-history-entry"));
       }
       root.append(history);
     }
     if (["closed", "finished"].includes(state.phase)) {
       const end = node("section", undefined, "room-panel room-end");
-      end.append(node("div", state.phase === "finished" ? "🎃" : "🌙", "room-end-icon"), node("h1", state.phase === "finished" ? "Фонарь Хэллоуина сияет!" : "Комната закрыта"));
+      end.append(questArt(state.phase==="finished"?6:5,"room-end-art"), node("h1", state.phase === "finished" ? "Фонарь Хэллоуина сияет!" : "Комната закрыта"));
       end.append(node("p", state.phase === "finished" ? "Все команды помогли друг другу. Победа общая!" : "Ведущий завершил эту игру."));
       if (host) end.append(button("Новая игра", handlers.newGame));
       root.append(end); return;
     }
     if (state.phase === "lobby") {
       const panel = node("section", undefined, "room-panel");
-      panel.append(node("h1", host ? `Подключите команды · слотов: ${state.teams.length}` : `${own.icon} Вы — ${own.name}`));
+      panel.append(host?node("h1",`Подключите команды · слотов: ${state.teams.length}`):teamLabel(own,`Вы — ${own.name}`,"h1"));
       panel.append(node("p", host ? "Покажите каждой команде её QR. На всю игру достаточно подключиться один раз." : "Обсудите подсказки внутри команды. Малыши ищут символы, старшие передают сообщения. Ждём ведущего."));
       if (host) {
         const list = node("div", undefined, "invite-grid");
         for (const team of state.teams) {
           const item = node("div", undefined, "invite-card");
           item.style.setProperty("--team-accent", team.accent);
-          item.append(node("strong", `${team.icon} ${team.name}`), node("small", team.joined ? "Подключились ✓" : "Ждём телефон"), button("Показать QR", () => handlers.invite(team.id), true));
+          item.append(teamLabel(team,team.name,"strong"), node("small", team.joined ? "Подключились ✓" : "Ждём телефон"), button("Показать QR", () => handlers.invite(team.id), true));
           list.append(item);
         }
         panel.append(list, button("Все в сборе — начать", () => handlers.act("start"), false, !state.teams.every(team => team.joined)));
@@ -166,7 +184,7 @@
     const round = state.round;
     const captain = state.teams.find(team => team.id === round.captain);
     const panel = node("section", undefined, "room-panel");
-    panel.append(node("p", `Этап ${state.roundIndex + 1} / ${state.total} · капитан: ${captain.icon} ${captain.name}`, "round-kicker"), node("h1", round.title), node("p", round.goal, "round-goal"));
+    panel.append(node("p", `Этап ${state.roundIndex + 1} / ${state.total} · капитан: ${captain.name}`, "round-kicker"), node("h1", round.title), node("p", round.goal, "round-goal"));
     const rule = node("div", undefined, "room-rule");
     rule.append(node("strong", "Правило этого этапа"), node("p", round.rule)); panel.append(rule);
     if (state.feedback) panel.append(node("p", state.feedback, state.phase === "solved" ? "room-success" : "room-feedback"));
@@ -184,7 +202,7 @@
     if (!host) {
       const secret = node("section", undefined, "secret-clue");
       secret.style.setProperty("--team-accent", own.accent);
-      secret.append(node("h2", `${own.icon} Секрет вашей команды`));
+      secret.append(teamLabel(own,"Секрет вашей команды","h2"));
       if (state.clue) {
         secret.append(node("div", state.clue.visual.join(" "), "clue-visual"), node("p", state.clue.text, "clue-text"), node("p", state.clue.ask, "clue-ask"));
       } else secret.append(node("div", "🧠", "clue-visual"), node("p", "Подсказка спрятана. Вспомните её вместе и расскажите капитану."));
@@ -236,7 +254,7 @@
     }
     if (state.phase === "ritual") {
       const nextTeam = state.teams.find(team => team.id === state.ritual.next);
-      panel.append(proposal(state), node("p", `Сейчас очередь: ${nextTeam.icon} ${nextTeam.name}`, "round-goal"));
+      panel.append(proposal(state), teamLabel(nextTeam,`Сейчас очередь: ${nextTeam.name}`,"p","round-goal"));
       if (!host) panel.append(button(round.id === 8 ? "Добавить наш ингредиент" : "Зажечь наш луч", () => handlers.act("activate"), false, state.ritual.next !== state.role));
       panel.append(node("p", `${state.ritual.step} / ${state.ritual.total} команд выполнили свой шаг`, "clue-ask"));
     }
@@ -244,7 +262,7 @@
       const guide = node("details", undefined, "dashboard-details");
       guide.open = !!draft.guideOpen; guide.addEventListener("toggle", () => { draft.guideOpen = guide.open; });
       guide.append(node("summary", "Подсказки ведущему"), node("p", state.guide.hint));
-      for (const team of state.teams) guide.append(node("p", `${team.icon} ${team.name}: ${state.guide.clues[team.id].text}`));
+      for (const team of state.teams) guide.append(teamLabel(team,`${team.name}: ${state.guide.clues[team.id].text}`,"p"));
       guide.append(node("strong", "Решение для помощи командам"));
       const solution = node("div", undefined, "proposal-row");
       for (const id of state.guide.solution) solution.append(picture(byId(state, id)));
@@ -252,5 +270,5 @@
     }
     root.append(panel);
   }
-  window.RoomUI = { render, node, button, showReward, roomSetup };
+  window.RoomUI = { render, node, button, showReward, roomSetup, questArt, teamArt, teamLabel, teamButton };
 })();

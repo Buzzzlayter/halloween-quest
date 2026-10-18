@@ -27,7 +27,6 @@
 
   function renderVideo() {
     stage.classList.add("animation-stage--illustrated", "animation-stage--video");
-    stage.style.setProperty("--media-ratio", task.videoAspect || "1 / 1");
     stage.removeAttribute("aria-hidden");
     const video = document.createElement("video");
     video.className = "task-video";
