@@ -20,5 +20,9 @@ Thumbs.db
 desktop.ini
 .cache/
 coverage/
+.local-data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.tmp
 *.temp

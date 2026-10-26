@@ -27,7 +27,7 @@ try {
   await action(second,"thank",{roundIndex:0,helper:a},409);
   await action(host,"setTeamActive",{team:a,active:true});
   assert.equal((await state(first)).run.cleared,true);
-  assert.equal((await state(first)).teams.find(t=>t.id===a).score,400);
+  assert.equal((await state(first)).teams.find(t=>t.id===a).score,800);
   await action(first,"continue",{roundIndex:0});
   const before=await state(host);
   await action(second,"finishGame",{},403);

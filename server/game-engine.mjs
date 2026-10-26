@@ -15,11 +15,10 @@ function settleRoom(room,now) {
     room.phase="finished";room.finishedAt=now;room.finishReason="completed";
   }
 }
-import { normalizeAnswer, validateFlow, validateTaskBank } from "./quest-config.mjs";
+import { normalizeAnswer, normalizeCode, validateFlow, validateTaskBank } from "./quest-config.mjs";
 import BANK from "./task-bank.json" with { type: "json" };
 import { dealQuest } from "./task-dealer.mjs";
 export { normalizeAnswer, validateFlow } from "./quest-config.mjs";
-const normalizeCode = value => value.normalize("NFKC").replace(/\s+/g,"").toUpperCase();
 function answerLines(value,limit) {
   if(value===undefined)return [];
   check(typeof value==="string"||Array.isArray(value),"Напишите ответы текстом.",400);
@@ -59,7 +58,8 @@ export function createRoom(code,now,makeToken,count,options={}) {
   for(const flow of Object.values(room.teamFlows))validateFlow(flow);
   room.bankVersion=BANK.version;
   room.questionPolicy="final-once-v1";
-  room.taskCatalog=BANK.questions.map(q=>({id:q.id,prompt:q.prompt,videoId:q.videoId}));
+  room.codePolicy="timed-once-v1";room.codeTimers={};
+  room.taskCatalog=BANK.questions.map(q=>({id:q.id,prompt:q.prompt,videoId:q.videoId,answer:q.answers[0].variants[0]}));
   room.scoring=validateScoring(options.scoring);
   room.runs=Object.fromEntries(ids(room).map(id=>[id,{stageIndex:0,cleared:false,done:false,found:{},submissions:{},history:[],videos:[],thanks:{},codeAttempts:0,lastCodeAttempt:0,result:""}]));
   delete room.testMode;delete room.rounds;delete room.orders;delete room.proposal;delete room.ready;
@@ -80,10 +80,10 @@ const stageVideos=stage=>[...(stage.videoIds||[]),...(stage.questions||[]).map(q
 function visibleVideos(room,role) {
   const run=room.runs[role],flow=flowFor(room,role);
   // Older snapshots may contain videos unlocked by a wrong code attempt.
-  const locked=new Set(flow.filter(s=>s.type==="code"&&!run.history.includes(s.id)).flatMap(stageVideos));
+  const locked=new Set(flow.filter(s=>s.type==="code"&&(!run.history.includes(s.id)||run.codeOutcomes?.[s.id]==="incorrect")).flatMap(stageVideos));
   const videos=run.videos.filter(id=>!locked.has(id));
   // Include older completed attempts too, without rewriting their scores or saved results.
-  for(const stage of flow)if(run.history.includes(stage.id))for(const id of stageVideos(stage))if(!videos.includes(id))videos.push(id);
+  for(const stage of flow)if(run.history.includes(stage.id))for(const id of stageVideos(stage))if(!locked.has(id)&&!videos.includes(id))videos.push(id);
   return videos;
 }
 function complete(room,team,stage,run,now,reward=true) {
@@ -148,6 +148,14 @@ function actFlow(room,role,action,data={},now=Date.now()) {
   } else if(action==="setScoring") {
     check(role==="host","Очки настраивает ведущий.",403);check(room.phase!=="finished","Игра уже закончилась.");
     room.scoring=validateScoring(data.scoring,room.scoring);
+  } else if(action==="startCodeTimer") {
+    check(role==="host","Таймер запускает ведущий.",403);
+    check(room.codePolicy==="timed-once-v1"&&room.phase==="playing","Таймер недоступен.");
+    const index=data.stageIndex,minutes=data.minutes,active=activeIds(room);
+    check(Number.isInteger(index)&&Number.isInteger(minutes)&&minutes>=1&&minutes<=180,"Введите число минут от 1 до 180.",400);
+    check(active.length&&active.every(id=>room.runs[id].stageIndex===index&&!room.runs[id].cleared&&!room.runs[id].done&&flowFor(room,id)[index]?.type==="code"),"Дождитесь, пока все команды дойдут до этого этапа.");
+    check(!room.codeTimers[index],"Таймер этого этапа уже запущен.");
+    room.codeTimers[index]={startedAt:now,endsAt:now+minutes*60000,minutes};
   } else if(action==="start") {
     check(role==="host","Запускает игру ведущий.",403);
     // Older clients may still send start after the last team has already joined.
@@ -186,13 +194,29 @@ function actFlow(room,role,action,data={},now=Date.now()) {
     } else if(action==="submitCode") {
       check(stage.type==="code","На этом этапе нужно ответить на вопросы.");
       if(run.cleared)return;
-      check(typeof data.code==="string"&&data.code.trim().length>0&&data.code.length<=64,"Введите код.",400);
+      check(typeof data.code==="string"&&data.code.length<=64&&(room.codePolicy==="timed-once-v1"||data.code.trim().length>0),"Введите код.",400);
+      if(room.codePolicy==="timed-once-v1") {
+        const timer=room.codeTimers?.[run.stageIndex];
+        check(timer&&now>=timer.endsAt,"Дождитесь окончания таймера.");
+        run.codeOutcomes ||= {};
+        const correct=normalizeCode(data.code)===normalizeCode(stage.code);
+        run.codeOutcomes[stage.id]=correct?"correct":"incorrect";
+        run.submissions[stage.id]={code:data.code.trim(),at:now,correct};
+        if(correct) {
+          credit(room,role,role+":"+stage.id+":code",room.scoring.code,"Верный код",stage.id,now);
+          run.result="Слово верное! Путь открыт.";complete(room,role,stage,run,now);
+        } else {
+          run.cleared=true;run.history.push(stage.id);
+          run.result="Код не засчитан. Очки за этот этап не начислены; можно идти дальше.";
+        }
+      } else {
       check(!run.lastCodeAttempt||now-run.lastCodeAttempt>=1000,"Подождите секунду перед следующей попыткой.",429);
       run.lastCodeAttempt=now;run.codeAttempts++;
       if(normalizeCode(data.code)===normalizeCode(stage.code)) {
         credit(room,role,role+":"+stage.id+":code",room.scoring.code,"Верный код",stage.id,now);
-        run.result="Код верный! Открыт новый ролик.";complete(room,role,stage,run,now);
+        run.result=stage.codeType==="word"?"Слово верное! Путь открыт.":"Код верный! Путь открыт.";complete(room,role,stage,run,now);
       } else run.result="Код пока не подошёл. Уточните код у ведущего.";
+      }
     } else throw new GameError("Неизвестное действие.",400);
   }
   room.version++;
@@ -207,10 +231,13 @@ export function act(room,role,action,data={},now=Date.now()) {
   return actFlow(room,role,action,data,now);
 }
 function publicStage(stage,completed=false) {
-  return {id:stage.id,title:stage.title,type:stage.type,prompt:stage.type==="code"?"Получите код у ведущего и введите его.":stage.prompt,
+  return {id:stage.id,title:stage.title,type:stage.type,prompt:stage.type==="code"?(stage.codeType==="word"?"Получите кодовое слово у ведущего и введите его.":"Получите код у ведущего и введите его."):stage.prompt,
+    ...(stage.codeType==="word"?{codeType:"word"}:{}),
     ...(stage.story?{story:stage.story}:{}),
+    ...(stage.videoTiming==="before-task"?{previewVideoIds:[...new Set(stageVideos(stage))]}:{}),
     ...(completed&&stage.epilogue?{epilogue:stage.epilogue}:{}),
     questions:stage.questions?.map(q=>({id:q.id,prompt:q.prompt,required:q.required,maxAnswers:q.maxAnswers,
+      ...(q.discussion?{discussion:q.discussion}:{}),
       ...(q.videoId?{videoId:q.videoId}:{}),
       ...(completed&&q.explanation?{solution:{answer:q.answers.map(a=>a.variants[0]).join("; "),explanation:q.explanation}}:{})}))||[]};
 }
@@ -218,7 +245,7 @@ function stats(room,id) {
   const run=room.runs[id];
   return {stageIndex:run.stageIndex,cleared:run.cleared,done:run.done,
     relevant:Object.values(run.found).reduce((sum,questions)=>sum+Object.values(questions).reduce((n,answers)=>n+answers.length,0),0),
-    codes:flowFor(room,id).filter(s=>s.type==="code"&&run.history.includes(s.id)).length};
+    codes:flowFor(room,id).filter(s=>s.type==="code"&&run.history.includes(s.id)&&run.codeOutcomes?.[s.id]!=="incorrect").length};
 }
 export function view(room,role) {
   if(room.engine!=="quest-flow-v2")return legacy.view(room,role);
@@ -230,7 +257,8 @@ export function view(room,role) {
     scoring:copy(room.scoring),scoreEvents:copy(room.scoreEvents),
     teams:teamsFor(room).map(t=>({...t,score:room.scores[t.id]||0,joined:room.members[t.id].joined,active:room.members[t.id].active!==false,...stats(room,t.id)})),
     stages:ownFlow.map(s=>({id:s.id,title:s.title,type:s.type})),
-    stage:own&&playing?publicStage(stage,own.cleared||own.done):null};
+    stage:own&&playing?publicStage(stage,(own.cleared||own.done)&&own.codeOutcomes?.[stage.id]!=="incorrect"):null};
+  if(room.codePolicy==="timed-once-v1")result.codeTimers=copy(room.codeTimers||{});
   if(room.phase==="finished") {
     const routes=ids(room).map(id=>flowFor(room,id));
     const sorted=[...result.teams].sort((a,b)=>Number(b.active)-Number(a.active)||b.score-a.score);let rank=0;
@@ -252,10 +280,19 @@ export function view(room,role) {
       acceptedByStage:Object.fromEntries(Object.entries(room.runs[id].found).map(([stageId,questions])=>[stageId,Object.fromEntries(Object.entries(questions).map(([qid,answers])=>[qid,answers.length]))]))}]));
     result.guide=copy(room.flow);
     result.guides=Object.fromEntries(ids(room).map(id=>[id,copy(flowFor(room,id))]));
-    if(room.taskCatalog)result.taskCatalog=copy(room.taskCatalog);
+    if(room.taskCatalog) {
+      const savedQuestions=Object.values(room.teamFlows||{}).flatMap(flow=>flow.flatMap(stage=>stage.questions||[]));
+      result.taskCatalog=room.taskCatalog.map(task=>{
+        // Older room snapshots did not store catalog answers. Prefer their saved assignments.
+        const question=savedQuestions.find(q=>q.id===task.id&&q.prompt===task.prompt)
+          ||BANK.questions.find(q=>q.id===task.id&&q.prompt===task.prompt);
+        return {...copy(task),answer:task.answer||question?.answers?.[0]?.variants?.[0]||"—"};
+      });
+    }
   } else if(own&&playing) {
     const stageVideoIds=stageVideos(stage),videos=visibleVideos(room,role);
     result.run={...stats(room,role),result:own.result,videos,stageVideos:videos.filter(id=>stageVideoIds.includes(id)),thanked:own.thanks[stage.id]||null,
+      ...(own.codeOutcomes?.[stage.id]?{codeOutcome:own.codeOutcomes[stage.id]}:{}),
       accepted:Object.fromEntries((stage.questions||[]).map(q=>[q.id,(own.found[stage.id]?.[q.id]||[]).length])),
       submission:copy(own.submissions[stage.id]?.answers||{}),summary:copy(own.results?.[stage.id]||null)};
   }
