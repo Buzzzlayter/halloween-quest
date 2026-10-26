@@ -3,24 +3,25 @@ import assert from "node:assert/strict";
 import {createRoom,joinRoom,act,view} from "../server/game-engine.mjs";
 const make=()=>{
   const r=createRoom("123456",Date.now(),undefined,1),role=r.teams[0].id;
+  delete r.codePolicy;delete r.codeTimers; // Exercise existing pre-timer rooms.
   joinRoom(r,role,r.members[role].invite);act(r,"host","start");
   return {r,role,questions:r.teamFlows[role][0].questions};
 };
 test("final submission accepts wrong, missing and entirely empty fields and reports accurate counts",()=>{
   for(const kind of ["empty","wrong","mixed-wrong","mixed-empty","correct"]) {
-    const {r,role,questions:[a,b]}=make();
+    const {r,role,questions}=make(),[a,b]=questions;
     const answer=q=>q.answers[0].variants[0];
     const answers=kind==="empty"?{}:kind==="wrong"?{[a.id]:"!!! неизвестно",[b.id]:"не знаем"}
       :kind==="mixed-wrong"?{[a.id]:answer(a),[b.id]:"не знаем"}:kind==="mixed-empty"?{[a.id]:answer(a),[b.id]:" \n "}
-      :{[a.id]:answer(a),[b.id]:answer(b)};
+      :Object.fromEntries(questions.map(q=>[q.id,answer(q)]));
     act(r,role,"finishQuestions",{roundIndex:0,answers});
     const state=view(r,role),summary=state.run.summary;
-    const correct=kind==="correct"?2:kind.startsWith("mixed")?1:0;
+    const correct=kind==="correct"?6:kind.startsWith("mixed")?1:0;
     const incorrect=kind==="wrong"?2:kind==="mixed-wrong"?1:0;
-    const skipped=2-correct-incorrect;
+    const skipped=6-correct-incorrect;
     assert.equal(summary.correct,correct);assert.equal(summary.incorrect,incorrect);assert.equal(summary.skipped,skipped);
-    assert.equal(summary.total,2);assert.equal(summary.notCorrect,2-correct);
-    assert.equal(summary.points,correct*100+(correct===2?200:0));
+    assert.equal(summary.total,6);assert.equal(summary.notCorrect,6-correct);
+    assert.equal(summary.points,correct*100+(correct===6?200:0));
     assert.equal(r.scores[role],summary.points);assert.equal(state.run.cleared,true);
     assert.deepEqual(state.run.videos,[1]);
     assert.deepEqual(view(r,"host").runs[role].results.welcome,summary);
@@ -31,7 +32,7 @@ test("final results are immutable across retries, alternative action names, refr
   const {r,role,questions:[a,b]}=make();
   act(r,role,"submitQuestions",{roundIndex:0,answers:{[a.id]:a.answers[0].variants[0]}});
   const restored=JSON.parse(JSON.stringify(r)),saved=view(restored,role).run.summary;
-  assert.equal(saved.correct,1);assert.equal(saved.skipped,1);
+  assert.equal(saved.correct,1);assert.equal(saved.skipped,5);
   for(const action of ["finishQuestions","submitQuestions"])act(restored,role,action,{roundIndex:0,answers:{[a.id]:a.answers[0].variants[0],[b.id]:b.answers[0].variants[0]}});
   assert.deepEqual(view(restored,role).run.summary,saved);assert.equal(restored.scores[role],100);
   assert.equal(restored.runs[role].history.filter(id=>id==="welcome").length,1);
@@ -65,10 +66,11 @@ test("all missed questions still show every video and allow finishing without aw
   }
   assert.equal(r.phase,"finished");assert.equal(r.scores[role],1500);
   assert.deepEqual(r.runs[role].videos,[1,2,3,4,5,6,7,8]);
-  assert.equal(view(r,role).run.summary.correct,0);assert.equal(view(r,role).run.summary.skipped,4);
+  assert.equal(view(r,role).run.summary.correct,0);assert.equal(view(r,role).run.summary.skipped,6);
 });
 test("old failed-stage snapshots also expose their videos without changing results, points or persisted state",()=>{
   const {r,role}=make();
+  r.teamFlows[role][0].questions=r.teamFlows[role][0].questions.slice(0,2); // Existing two-question room.
   act(r,role,"finishQuestions",{roundIndex:0,answers:{}});
   r.runs[role].videos=[]; // Previous release kept failed submissions without a video.
   const before=JSON.stringify(r);
@@ -76,13 +78,13 @@ test("old failed-stage snapshots also expose their videos without changing resul
   assert.equal(JSON.stringify(r),before);assert.equal(r.scores[role],0);
   assert.equal(view(r,role).run.summary.skipped,2);
 });
-test("wrong code keeps its video locked and does not award points or allow advancing",()=>{
+test("wrong code does not award points, reveal its video or allow advancing",()=>{
   const {r,role}=make();
   act(r,role,"finishQuestions",{roundIndex:0,answers:{}});act(r,role,"continue",{roundIndex:0});
   const stage=r.teamFlows[role][1],wrong=stage.code==="0000"?"0001":"0000";
   act(r,role,"submitCode",{roundIndex:1,code:wrong},10000);
   assert.deepEqual(view(r,role).run.stageVideos,[]);
-  assert.equal(r.runs[role].videos.includes(2),false);
+  assert.equal(r.runs[role].videos.includes(2),true);
   assert.equal(r.runs[role].cleared,false);assert.equal(r.scores[role],0);
   assert.throws(()=>act(r,role,"continue",{roundIndex:1}),e=>e.status===409);
   act(r,role,"submitCode",{roundIndex:1,code:stage.code},11000);
@@ -92,6 +94,8 @@ test("wrong code keeps its video locked and does not award points or allow advan
 
 test("all code stages hide videos from old wrong-attempt snapshots until the code is correct",()=>{
   const {r,role}=make();
+  for(const q of r.teamFlows[role][0].questions)q.videoId=1; // Old room only watched the ghost at first.
+  for(const stage of r.teamFlows[role])delete stage.videoTiming;
   act(r,role,"finishQuestions",{roundIndex:0,answers:{}});act(r,role,"continue",{roundIndex:0});
   for(let index=1;index<=3;index++) {
     const stage=r.teamFlows[role][index],id=stage.videoIds[0],now=index*10000;

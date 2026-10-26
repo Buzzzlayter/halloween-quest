@@ -58,9 +58,9 @@ test("failed answer persistence leaves no phantom score; retry and reload award 
   h.failPut();assert.equal((await h.call("action",body,token)).status,500);
   assert.deepEqual(h.room,before);assert.deepEqual(h.saved,before);
   const responses=await Promise.all([h.call("action",body,token),h.call("action",body,token)]);
-  assert.ok(responses.every(r=>r.status===200));assert.equal(h.room.scores[id],400);
+  assert.ok(responses.every(r=>r.status===200));assert.equal(h.room.scores[id],800);
   const committed=h.saved;h.reload();
-  assert.equal((await h.call("state",undefined,token)).data.teams[0].score,400);
+  assert.equal((await h.call("state",undefined,token)).data.teams[0].score,800);
   assert.deepEqual(h.room,committed);
 });
 

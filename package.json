@@ -4,7 +4,10 @@
   "private": true,
   "description": "Eight illustrated Halloween quests with stable QR links",
   "scripts": {
-    "test": "node --test tests/test-game.mjs tests/test-host.mjs tests/test-flow.mjs tests/test-flow-ui.mjs tests/test-task-bank.mjs tests/test-final-submission.mjs tests/test-autostart.mjs tests/test-room-recovery.mjs tests/test-worker-storage.mjs tests/test-client-races.mjs",
+    "start": "node server/node-server.mjs",
+    "local": "npm run build && node scripts/start-local.mjs",
+    "public": "npm run build && node scripts/start-public.mjs",
+    "test": "node --test tests/test-server-control.mjs tests/test-public-server.mjs tests/test-code-timers.mjs tests/test-game.mjs tests/test-host.mjs tests/test-flow.mjs tests/test-flow-ui.mjs tests/test-task-bank.mjs tests/test-final-submission.mjs tests/test-autostart.mjs tests/test-room-recovery.mjs tests/test-worker-storage.mjs tests/test-client-races.mjs tests/test-node-server.mjs tests/test-sqlite-store.mjs",
     "build": "node scripts/package-site.mjs",
     "deploy": "npm run build && wrangler deploy",
     "cloudflare:login": "wrangler login --device",

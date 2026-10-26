@@ -94,6 +94,7 @@
       const next = await request(`/api/rooms/${pollingSession.code}/state`, undefined, pollingSession);
       if (session !== pollingSession || displayingWelcome) return;
       accept(next);
+      if(next.codeTimers&&next.phase==="playing")draw();
       if (message.dataset.network === "true") { tell(""); delete message.dataset.network; }
     } catch (error) {
       if (session !== pollingSession || displayingWelcome) return;

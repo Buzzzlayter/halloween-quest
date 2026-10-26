@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {createRoom,joinRoom,dispatch,view,authorize} from "../server/game-engine.mjs";
 
-const room=(count=3)=>createRoom("123456",Date.now(),undefined,count);
+const room=(count=3)=>{const r=createRoom("123456",Date.now(),undefined,count);delete r.codePolicy;delete r.codeTimers;return r;};
 const join=(r,id)=>joinRoom(r,id,r.members[id].invite);
 const host=(r,action,data={})=>dispatch(r,"host",action,data);
 const toggle=(r,id,active)=>host(r,"setTeamActive",{team:id,active});

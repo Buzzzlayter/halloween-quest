@@ -1,3 +1,4 @@
+import {normalizeCode} from "./quest-config.mjs";
 const copy=value=>JSON.parse(JSON.stringify(value));
 function randomInt(limit) {
   const threshold=Math.floor(0x100000000/limit)*limit;
@@ -10,28 +11,40 @@ function shuffle(items,pick) {
   return result;
 }
 export function dealQuest(template,bank,teams,pick=randomInt) {
-  const pools=new Map(),teamFlows={};
-  for(const videoId of new Set(bank.questions.map(q=>q.videoId)))pools.set(videoId,shuffle(bank.questions.filter(q=>q.videoId===videoId),pick));
+  const teamFlows={};
   const usedCodes=new Set();
+  const fixedIds=new Set(template.stages.flatMap(stage=>stage.questionIds||[]));
+  const wordPool=template.stages.some(stage=>stage.codeType==="word")?shuffle(template.codeWords,pick):[];
   for(const team of teams) {
+    // Independent shuffled pools allow sharing between teams, never within one route.
+    const pools=new Map();
+    for(const videoId of new Set(bank.questions.map(q=>q.videoId)))pools.set(videoId,shuffle(bank.questions.filter(q=>q.videoId===videoId&&!fixedIds.has(q.id)),pick));
     teamFlows[team.id]=template.stages.map(stage=>{
       let hints;
       const result={id:stage.id,type:stage.type,title:stage.title,prompt:stage.prompt,story:stage.story,epilogue:stage.epilogue,videoIds:[...stage.videoIds]};
+      if(template.videoTiming==="before-task")result.videoTiming="before-task";
       if(stage.type==="questions") {
         result.questions=Array.from({length:stage.questionCount},(_,index)=>{
           const videoId=stage.questionVideoIds?.[index]||stage.videoIds[0];
-          const candidate=pools.get(videoId)?.shift();
-          if(!candidate)throw new Error("Не хватает вопросов для ролика "+videoId+": повторная выдача запрещена.");
+          const candidate=stage.questionIds?bank.questions.find(q=>q.id===stage.questionIds[index]&&q.videoId===videoId):pools.get(videoId)?.shift();
+          if(!candidate)throw new Error("Не хватает вопросов для ролика "+videoId+": внутри команды повторная выдача запрещена.");
           return {...copy(candidate),required:1,maxAnswers:1};
         });
         hints=result.questions.map(q=>q.prompt+" Подсказка: "+q.hint);
       } else {
+        if(stage.codeType==="word") {
+          const code=wordPool.shift();
+          if(!code)throw new Error("Не хватает уникальных кодовых слов.");
+          usedCodes.add(normalizeCode(code));result.code=code;result.codeType="word";
+          hints=["Кодовое слово: "+code+"."];
+        } else {
         // Generate unique codes without retry loops, even with an injected deterministic RNG.
         const range=10**stage.codeLength;
         let number=pick(range),code=String(number).padStart(stage.codeLength,"0");
         while(usedCodes.has(code)){number=(number+1)%range;code=String(number).padStart(stage.codeLength,"0");}
         usedCodes.add(code);result.code=code;
         hints=[...code].map((digit,index)=>"Цифра "+(index+1)+" из "+stage.codeLength+" — "+digit+".");
+        }
       }
       result.hintParts=[...hints];
       return result;

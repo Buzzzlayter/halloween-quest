@@ -4,7 +4,7 @@
   const activeTeams=state=>state.teams.filter(t=>t.active!==false);
   const guideFor=(state,team)=>state.guides?.[team]||state.guide;
   const pointLabels={answer:"За каждый засчитанный ответ",code:"За верный код",stage:"За завершение этапа",thanks:"Благодарность за подсказку"};
-  let mediaCache=null,mediaUsed=false;
+  const mediaEntries=new Map();let mediaUsed=new Set();
   function scoringInputs(scoring,prefix,draft) {
     const grid=node("div",undefined,"flow-scoring");
     for(const [key,label] of Object.entries(pointLabels)) {
@@ -91,17 +91,17 @@
     panel.append(list,node("p","Финишировали: "+activeTeams(state).filter(team=>team.done).length+" / "+activeTeams(state).length+" · место по очкам, прогресс по заданиям","clue-ask"));
     return panel;
   }
-  function videoPanel(state,id,onEnded) {
+  function videoPanel(state,id,onEnded,autoplay=true) {
     const media=(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===id);
-    if(!media)return node("p","Ролик пока недоступен. Очки и результат сохранены.");
+    if(!media)return node("p","Ролик пока недоступен. Проверьте подключение к интернету.");
     const key=state.code+":"+state.role+":"+id;
-    mediaUsed=true;
-    if(mediaCache?.key===key){mediaCache.onEnded=onEnded;return mediaCache.node;}
-    if(mediaCache?.video)mediaCache.video.pause();
+    mediaUsed.add(key);
+    const cached=mediaEntries.get(key);
+    if(cached){cached.onEnded=onEnded;return cached.node;}
     const wrapper=node("div",undefined,"flow-video-wrap");
     const video=node("video");video.src=media.video;video.poster=media.poster;video.className="flow-video";
     video.muted=false;video.defaultMuted=false;video.loop=false;video.playsInline=true;video.preload="metadata";
-    video.autoplay=!(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    video.autoplay=autoplay&&!(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     video.setAttribute("aria-label",media.title);
     const control=button("",()=>{
       if(video.paused)return video.play().catch(()=>{});
@@ -114,12 +114,12 @@
         : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
       control.setAttribute("aria-label",video.paused?"Воспроизвести ролик":"Пауза");
     }
-    video.addEventListener("play",update);video.addEventListener("pause",update);update();
+    video.addEventListener("play",()=>{for(const entry of mediaEntries.values())if(entry.video!==video)entry.video.pause();update();});video.addEventListener("pause",update);update();
     const status=node("p",undefined,"flow-video-note");status.hidden=true;
-    video.addEventListener("error",()=>{status.textContent="Ролик не загрузился. Проверьте интернет; результат и очки сохранены.";status.hidden=false;},{once:true});
+    video.addEventListener("error",()=>{status.textContent="Ролик не загрузился. Проверьте интернет и повторите воспроизведение.";status.hidden=false;},{once:true});
     wrapper.append(video,control,status);
-    const entry={key,node:wrapper,video,onEnded};mediaCache=entry;
-    video.addEventListener("ended",()=>{if(mediaCache===entry)entry.onEnded?.();});
+    const entry={key,node:wrapper,video,onEnded};mediaEntries.set(key,entry);
+    video.addEventListener("ended",()=>{if(mediaEntries.get(key)===entry)entry.onEnded?.();});
     if(video.autoplay)video.play().catch(()=>{});
     return wrapper;
   }
@@ -176,14 +176,13 @@
   function taskBank(state) {
     const details=node("details",undefined,"dashboard-details");details.id="flow-task-bank";
     details.append(node("summary","Банк заданий · "+state.taskCatalog.length),
-      node("p","Наборы выбираются при создании комнаты. Загадки не повторяются между командами; правильные ответы видны рядом с ответами команд.","clue-ask"));
-    const assigned=new Map();
-    for(const team of state.teams)for(const stage of guideFor(state,team.id))for(const q of stage.questions||[])assigned.set(q.id,team);
+      node("p","Загадки и правильные ответы для ведущего.","clue-ask"));
     const list=node("ol",undefined,"flow-bank-list");
     for(const task of state.taskCatalog) {
-      const team=assigned.get(task.id),item=node("li");
+      const item=node("li");
       if(task.videoId)item.append(node("small",(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===task.videoId)?.title||"Сюжет "+task.videoId));
-      item.append(node("span",task.prompt),team?teamLabel(team,team.name,"small"):node("small","В резерве"));list.append(item);
+      item.append(node("span",task.prompt),node("small","Ответ: "+(task.answer||"—")));
+      list.append(item);
     }
     details.append(list);return details;
   }
@@ -209,8 +208,34 @@
   function hostPanel(state,handlers,draft) {
     const panel=node("section",undefined,"room-panel");
     panel.append(node("h1",state.phase==="finished"?"Все команды завершили игру":"Панель ведущего"),
-      node("p","Команды проходят этапы самостоятельно. Ответы и коды проверяются автоматически; ниже видны засчитанные ответы и прогресс.","round-goal"));
+      node("p",state.codeTimers?"Команды проходят вопросы самостоятельно. Для каждого кодового этапа дождитесь всех и запустите таймер.":"Команды проходят этапы самостоятельно. Ответы и коды проверяются автоматически; ниже видны засчитанные ответы и прогресс.","round-goal"));
     panel.append(hostStandings(state,handlers),participationControls(state,handlers));
+    if(state.codeTimers&&state.phase==="playing") {
+      const active=activeTeams(state),indices=state.stages.map((s,i)=>s.type==="code"?i:-1).filter(i=>i>=0);
+      for(const index of indices) {
+        const ready=active.filter(t=>state.runs[t.id].stageIndex===index&&!state.runs[t.id].cleared&&!state.runs[t.id].done);
+        const timer=state.codeTimers[index];
+        if(!ready.length&&!timer)continue;
+        const box=node("section",undefined,"flow-results");
+        box.append(node("h2",state.stages[index].title),node("p","На этапе: "+ready.length+" из "+active.length));
+        if(!timer) {
+          draft.timerMinutes ||= {};const label=node("label","Длительность в минутах","flow-question"),input=node("input");
+          input.type="number";input.min="1";input.max="180";input.step="1";input.value=String(draft.timerMinutes[index]??10);input.className="flow-code";input.id="timer-minutes-"+index;label.htmlFor=input.id;
+          input.addEventListener("input",()=>{draft.timerMinutes[index]=input.value;});
+          const start=button("Запустить таймер",()=>handlers.act("startCodeTimer",{stageIndex:index,minutes:Number(draft.timerMinutes[index]??10)}));
+          start.disabled=ready.length!==active.length;
+          box.append(label,input,start);
+        } else {
+          const seconds=Math.max(0,Math.ceil((timer.endsAt-Date.now())/1000));
+          box.append(node("p",seconds?"Осталось: "+Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"Время вышло. Выдайте коды победителям.","room-notice"));
+          if(!seconds)for(const team of active) {
+            const code=guideFor(state,team.id)[index]?.code;
+            box.append(node("p",team.name+": "+code,"flow-submitted"));
+          }
+        }
+        panel.append(box);
+      }
+    }
     if(state.demo)panel.append(node("p","Демонстрационный сценарий. Вопросы, допустимые ответы, коды и подсказки заданы в server/quest-flow.json.","room-notice"));
     for(const team of state.teams) {
       const run=state.runs[team.id],section=node("details",undefined,"flow-team-review");
@@ -225,7 +250,9 @@
         const result=run.results?.[stage.id];
         if(result)section.append(node("p","Верно: "+result.correct+" / "+result.total+" · неверно: "+result.incorrect+" · пропущено: "+result.skipped+" · +"+result.points+" очков","clue-ask"));
         if(stage.type==="code") {
-          section.append(node("p",(index<run.stageIndex||run.cleared?"Код принят":"Нет ответа")+" ("+stage.code+")","flow-submitted"));
+          const timed=state.codeTimers,available=!timed||timed[index]&&Date.now()>=timed[index].endsAt;
+          const status=submission?.correct===false?"Код не засчитан":index<run.stageIndex||run.cleared?"Код принят":"Нет ответа";
+          section.append(node("p",status+(available?" ("+stage.code+")":""),"flow-submitted"));
         }
         for(const q of stage.questions||[]) {
           const answer=(submission?.answers?.[q.id]||[]).join(" / ")||"Нет ответа";
@@ -309,45 +336,60 @@
       thanksPanel(panel,state,handlers);return panel;
     }
     const stage=state.stage;
+    const preview=Array.isArray(stage.previewVideoIds)&&stage.previewVideoIds.length>0;
     draft.flow ||= {};const key=state.role+":"+stage.id;
     const cache=draft.flow[key] ||= {answers:{},code:""};
-    panel.append(node("p","Этап "+(state.roundIndex+1)+" / "+state.total+" · ваш темп","round-kicker"),node("h1",stage.title),node("p",stage.type==="questions"?questionPrompt(stage.prompt):stage.prompt,"round-goal"));
+    panel.append(node("p","Этап "+(state.roundIndex+1)+" / "+state.total+" · ваш темп","round-kicker"),node("h1",stage.title),node("p",stage.type==="questions"?questionPrompt(stage.prompt):state.codeTimers?"Дождитесь окончания таймера. Победители получат слово у ведущего.":stage.prompt,"round-goal"));
     if(stage.story)panel.append(node("p",stage.story,"flow-story"));
     if(run.summary)panel.append(questionResult(run.summary));
-    else if(run.result)panel.append(node("p",run.result,run.cleared?"room-success":"room-feedback"));
+    else if(run.result)panel.append(node("p",run.result,run.cleared&&run.codeOutcome!=="incorrect"?"room-success":"room-feedback"));
     if(run.cleared) {
-      panel.append(node("p",run.summary?"Ответы отправлены":"Задание выполнено! ✦","flow-cleared"));
-      const pending=rewardVideos(panel,state,cache,handlers);
+      panel.append(node("p",run.summary?"Ответы отправлены":run.codeOutcome==="incorrect"?"Этап завершён":"Задание выполнено! ✦","flow-cleared"));
+      const pending=preview?null:rewardVideos(panel,state,cache,handlers);
       panel.append(pending!==null?button("Следующий ролик →",()=>{cache.video=pending;handlers.redraw();})
         :button(state.roundIndex===state.total-1?"Завершить игру":"К следующему этапу →",()=>handlers.act("continue")));
       const next=state.stages[state.roundIndex+1];
       if(next)panel.append(node("p","Дальше: "+next.title,"clue-ask"));
       storyResolution(panel,stage);
     } else if(stage.type==="questions") {
+      if(stage.questions.some(q=>q.discussion))panel.append(node("p","В поле — ответ на задачу. Фантазии обсуждайте вслух: они не оцениваются.","clue-ask"));
       for(const q of stage.questions) {
-        if(q.videoId&&q.videoId!==stage.questions[stage.questions.indexOf(q)-1]?.videoId)panel.append(node("h3",(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===q.videoId)?.title||"Тайна хранителя","flow-scene-title"));
-        const label=node("label",questionPrompt(q.prompt),"flow-question");label.htmlFor="answer-"+state.role+"-"+stage.id+"-"+q.id;
-        const input=node("textarea");input.id=label.htmlFor;input.rows=Math.min(4,q.maxAnswers+1);input.maxLength=160*q.maxAnswers;
+        if(q.videoId&&q.videoId!==stage.questions[stage.questions.indexOf(q)-1]?.videoId) {
+          panel.append(node("h3",(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===q.videoId)?.title||"Тайна хранителя","flow-scene-title"));
+          if(preview&&stage.previewVideoIds.includes(q.videoId))panel.append(videoPanel(state,q.videoId,undefined,stage.questions[0]===q));
+        }
         if(cache.answers[q.id]===undefined)cache.answers[q.id]=(run.submission[q.id]||[]).join("\n");
+        const inputId="answer-"+state.role+"-"+stage.id+"-"+q.id;
+        const label=node("label",questionPrompt(q.prompt),"flow-question");label.htmlFor=inputId;
+        const input=node("textarea");input.id=inputId;input.rows=Math.min(4,q.maxAnswers+1);input.maxLength=160*q.maxAnswers;
         input.value=cache.answers[q.id];input.placeholder=q.maxAnswers===1?"Одно слово или число":"Короткий ответ";
         input.addEventListener("input",()=>{cache.answers[q.id]=input.value;});
         const count=run.accepted[q.id]||0;
         panel.append(label,input,node("p","Засчитано "+count+" · нужно "+q.required+" · максимум "+q.maxAnswers,count>=q.required?"room-success":"clue-ask"));
+        if(q.discussion)panel.append(node("p","Пофантазируйте вслух: "+q.discussion,"flow-discussion"));
       }
       panel.append(node("p","Отправка завершает этап. Исправить ответы после отправки нельзя.","clue-ask"),
         button("Отправить ответы",()=>handlers.act("finishQuestions",{answers:Object.fromEntries(stage.questions.map(q=>[q.id,cache.answers[q.id]||""]))})));
-      rewardVideos(panel,state,cache,handlers);
     } else {
-      const label=node("label","Код","flow-question");label.htmlFor="code-"+state.role+"-"+stage.id;
+      if(preview)panel.append(videoPanel(state,stage.previewVideoIds[0]));
+      const timer=state.codeTimers?.[state.roundIndex],waiting=state.codeTimers&&(!timer||Date.now()<timer.endsAt);
+      if(waiting) {
+        const seconds=timer?Math.max(0,Math.ceil((timer.endsAt-Date.now())/1000)):null;
+        panel.append(node("p",timer?"Осталось: "+Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0"):"Ждём все команды и запуск таймера ведущим.","room-notice"));
+      } else {
+      const label=node("label",stage.codeType==="word"?"Кодовое слово":"Код","flow-question");label.htmlFor="code-"+state.role+"-"+stage.id;
       const input=node("input");input.id=label.htmlFor;input.className="flow-code";input.type="text";input.maxLength=64;input.autoComplete="off";input.value=cache.code;
+      input.inputMode="text";input.spellcheck=false;
+      input.placeholder=stage.codeType==="word"?"Слово от ведущего":"Код от ведущего";
       input.addEventListener("input",()=>{cache.code=input.value;});
-      panel.append(label,input,button("Проверить код",()=>handlers.act("submitCode",{code:cache.code})));
-      rewardVideos(panel,state,cache,handlers);
+      if(state.codeTimers)panel.append(node("p","Если код не получен, отправьте пустое поле. Ответ можно отправить только один раз.","clue-ask"));
+      panel.append(label,input,button(state.codeTimers?"Отправить код":"Проверить код",()=>handlers.act("submitCode",{code:cache.code})));
+      }
     }
     thanksPanel(panel,state,handlers);return panel;
   }
   function render(root,state,handlers,draft) {
-    const resume=mediaCache?.video&&!mediaCache.video.paused;mediaUsed=false;
+    const resume=new Set([...mediaEntries].filter(([,entry])=>!entry.video.paused).map(([key])=>key));mediaUsed=new Set();
     try {
       root.replaceChildren();
       if(state.phase==="closed") {root.append(node("h1","Комната закрыта"),button("Новая игра",handlers.newGame));return;}
@@ -372,12 +414,12 @@
       else if(state.role==="host")root.append(hostPanel(state,handlers,draft));
       else root.append(teamPanel(state,handlers,draft));
     } finally {
-      if(mediaCache?.video) {
-        if(!mediaUsed)mediaCache.video.pause();
-        else if(resume)mediaCache.video.play().catch(()=>{});
+      for(const [key,entry] of mediaEntries) {
+        if(!mediaUsed.has(key)){entry.video.pause();mediaEntries.delete(key);}
+        else if(resume.has(key))entry.video.play().catch(()=>{});
       }
     }
   }
-  function stopMedia(){mediaCache?.video?.pause();mediaCache=null;}
+  function stopMedia(){for(const entry of mediaEntries.values())entry.video.pause();mediaEntries.clear();}
   window.FlowUI={render,scoringInputs,readScoring,stopMedia};
 })();

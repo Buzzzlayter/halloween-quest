@@ -5,7 +5,7 @@ export async function request(base,path,auth,body,status=200) {
     body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(20000)});
   assert.equal(response.status,status,"HTTP contract: "+path.replace(/\d{6}/g,"ROOM"));return response;
 }
-export async function runFlow(base,count) {
+export async function runFlow(base,count,advanceTime=()=>new Promise(resolve=>setTimeout(resolve,60_100))) {
   let host;const sessions={};let hostState;
   const getState=async role=>(await request(base,"/api/rooms/"+host.code+"/state",sessions[role])).json();
   const teamState=getState;
@@ -42,23 +42,32 @@ export async function runFlow(base,count) {
     const guides=hostState.guides||Object.fromEntries(roles.map(role=>[role,hostState.guide]));
     const assigned=roles.flatMap(role=>guides[role].flatMap(stage=>(stage.questions||[]).map(q=>q.id)));
     const codes=roles.flatMap(role=>guides[role].filter(s=>s.type==="code").map(s=>s.code));
-    assert.equal(new Set(assigned).size,assigned.length);assert.equal(new Set(codes).size,codes.length);
+    assert.equal(assigned.length,count*12);assert.equal(new Set(codes).size,codes.length);
+    for(const role of roles) {
+      const own=guides[role].flatMap(stage=>(stage.questions||[]).map(q=>q.id));
+      assert.equal(new Set(own).size,12);
+    }
     const [first,helper]=roles;
     await action(first,"thank",{helper:first},400);
     if(helper) {
       await action(first,"thank",{helper});
       await action(first,"thank",{helper});
     }
-    for(const role of roles) {
-      let own=await teamState(role);
-      assert.equal("guide" in own,false);assert.equal("runs" in own,false);
-      assert.equal("guides" in own,false);assert.equal("taskCatalog" in own,false);
-      for(const stage of guides[role]) {
+    for(let index=0;index<guides[first].length;index++) {
+      if(guides[first][index].type==="code") {
+        await action("host","startCodeTimer",{stageIndex:index,minutes:1});
+        await action(first,"submitCode",{code:guides[first][index].code},409);
+        await advanceTime(60_100);
+      }
+      for(const role of roles) {
+        let own=await teamState(role);const stage=guides[role][index];
+        assert.equal("guide" in own,false);assert.equal("runs" in own,false);
+        assert.equal("guides" in own,false);assert.equal("taskCatalog" in own,false);
         assert.equal("hints" in own,false);
         if(stage.type==="questions") {
           assert.equal("answers" in own.stage.questions[0],false);
           assert.ok(own.stage.questions.every(q=>!("solution" in q)));
-          assert.deepEqual(stage.questions.map(q=>q.videoId),stage.id==="welcome"?[1,1]:[5,6,7,8]);
+          assert.deepEqual(stage.questions.map(q=>q.videoId),stage.id==="welcome"?[1,1,2,3,4,4]:[5,5,6,6,7,8]);
           const answers=Object.fromEntries(stage.questions.map(q=>[q.id,q.answers.slice(0,q.required).map(a=>a.variants[0])]));
           own=await action(role,"submitQuestions",{answers});
         } else {
@@ -73,12 +82,12 @@ export async function runFlow(base,count) {
         if(stage.type==="code")own=await action(role,"submitCode",{code:stage.code});
         assert.equal(own.teams.find(t=>t.id===role).score,score);
         own=await action(role,"continue");
-      }
-      assert.equal(own.run.done,true);assert.equal(own.run.videos.length,8);
-      if(role===first&&helper) {
+        if(index===4) {assert.equal(own.run.done,true);assert.equal(own.run.videos.length,8);}
+        if(index===4&&role===first&&helper) {
         const waiting=await teamState(helper);
-        assert.equal(waiting.roundIndex,0);assert.equal(waiting.run.done,false);
+        assert.equal(waiting.roundIndex,4);assert.equal(waiting.run.done,false);
         assert.equal("finale" in own,false);assert.equal("finale" in waiting,false);
+        }
       }
     }
     hostState=await getState("host");
@@ -87,8 +96,8 @@ export async function runFlow(base,count) {
     assert.deepEqual(hostState.finale.allVideoIds,[1,2,3,4,5,6,7,8]);
     for(const role of roles)assert.deepEqual((await teamState(role)).finale,hostState.finale);
     for(const team of hostState.teams) {
-      assert.equal(team.score,team.id===helper?2600:2500);
-      assert.equal(hostState.runs[team.id].relevant,6);assert.equal(hostState.runs[team.id].codes,3);
+      assert.equal(team.score,team.id===helper?3200:3100);
+      assert.equal(hostState.runs[team.id].relevant,12);assert.equal(hostState.runs[team.id].codes,3);
     }
     console.log("PASS: "+count+" teams, independent sessions, automatic questions/codes, all videos, points, no client hints"+(helper?", peer thanks.":"."));
   } finally { if(host)await request(base,"/api/rooms/"+host.code+"/action",host,{action:"close"}); }

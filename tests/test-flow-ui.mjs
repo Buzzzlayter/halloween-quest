@@ -4,7 +4,8 @@ import {readFile} from "node:fs/promises";
 import vm from "node:vm";
 import TEAM_ART from "../server/team-art.json" with {type:"json"};
 import {createRoom} from "./fixtures/fixed-room.mjs";
-import {createRoom as createDealtRoom,joinRoom,act,dispatch,view,flowConfig,authorize} from "../server/game-engine.mjs";
+import {createRoom as createTimedRoom,joinRoom,act,dispatch,view,flowConfig,authorize} from "../server/game-engine.mjs";
+const createDealtRoom=(...args)=>{const room=createTimedRoom(...args);delete room.codePolicy;delete room.codeTimers;return room;};
 const read=name=>readFile(new URL("../dist/assets/"+name+".js",import.meta.url),"utf8");
 class Element {
   constructor(tag="div"){this.tagName=tag;this.children=[];this.listeners={};this.attributes={};this.dataset={};this.paused=true;this.style={setProperty(){}};this.classList={add(){},remove(){}};}
@@ -201,9 +202,14 @@ test("new host bank lists all possibilities and shows each team's own assigned q
   const handlers={act(){},redraw(){},invite(){},newGame(){}};
   window.RoomUI.render(root,view(r,"host"),handlers,{});
   const bank=root.all().find(e=>e.id==="flow-task-bank");
-  assert.ok(bank);assert.ok(bank.all().some(e=>e.textContent==="Банк заданий · 48"));
-  assert.equal(bank.all().filter(e=>e.tagName==="li").length,48);
-  assert.equal(bank.all().filter(e=>e.textContent==="В резерве").length,0);
+  assert.ok(bank);assert.ok(bank.all().some(e=>e.textContent==="Банк заданий · 12"));
+  assert.equal(bank.all().filter(e=>e.tagName==="li").length,12);
+  assert.equal(bank.all().some(e=>e.textContent==="В резерве"),false);
+  for(const task of view(r,"host").taskCatalog) {
+    const item=bank.all().find(e=>e.tagName==="li"&&e.all().some(child=>child.textContent===task.prompt));
+    assert.ok(item.all().some(e=>e.textContent==="Ответ: "+task.answer));
+    assert.equal(item.all().some(e=>r.teams.some(team=>team.name===e.textContent)),false);
+  }
   for(const team of r.teams)joinRoom(r,team.id,r.members[team.id].invite);
   act(r,"host","start");
   window.RoomUI.render(root,view(r,"host"),handlers,{});
@@ -233,16 +239,18 @@ test("Send answers accepts an empty form, displays final counts and removes edit
   const handlers={invite(){},newGame(){},redraw:render,act(name,data){act(r,role,name,{roundIndex:r.runs[role].stageIndex,...data});render();}};
   function render(){window.RoomUI.render(root,view(r,role),handlers,{});}
   render();
+  assert.equal(root.all().filter(e=>e.tagName==="textarea").length,6);
+  assert.equal(root.all().filter(e=>e.attributes.role==="radiogroup").length,0);
+  assert.equal(root.all().filter(e=>e.type==="radio").length,0);
   const send=root.all().find(e=>e.textContent==="Отправить ответы");
   assert.ok(send);assert.equal(send.disabled,false);
-  assert.ok(root.all().filter(e=>e.tagName==="textarea").every(e=>e.placeholder==="Одно слово или число"));
   assert.ok(root.all().some(e=>e.textContent==="Отправка завершает этап. Исправить ответы после отправки нельзя."));
   await send.click();
   assert.equal(root.all().some(e=>e.tagName==="textarea"||e.textContent==="Отправить ответы"),false);
-  assert.ok(root.all().some(e=>e.textContent==="Правильно: 0 из 2"));
-  assert.ok(root.all().some(e=>e.textContent==="Не засчитано: 2. Неверно: 0 · пропущено: 2."));
+  assert.ok(root.all().some(e=>e.textContent==="Правильно: 0 из 6"));
+  assert.ok(root.all().some(e=>e.textContent==="Не засчитано: 6. Неверно: 0 · пропущено: 6."));
   assert.ok(root.all().some(e=>e.textContent==="Начислено при отправке: +0 очков."));
-  assert.ok(root.all().some(e=>e.tagName==="video"));
+  assert.equal(root.all().some(e=>e.tagName==="video"),true);
   await root.all().find(e=>e.textContent==="К следующему этапу →").click();
   assert.ok(root.all().some(e=>e.textContent==="Проверить код"));
   const field=root.all().find(e=>e.className==="flow-code");
@@ -253,8 +261,52 @@ test("Send answers accepts an empty form, displays final counts and removes edit
   assert.equal(root.all().some(e=>e.textContent==="К следующему этапу →"),false);
   act(r,role,"submitCode",{roundIndex:1,code:r.teamFlows[role][1].code},r.runs[role].lastCodeAttempt+1000);
   render();
-  assert.ok(root.all().some(e=>e.tagName==="video"));
+  assert.equal(root.all().some(e=>e.tagName==="video"),true);
   assert.ok(root.all().some(e=>e.textContent==="К следующему этапу →"));
+});
+
+test("typed answers persist across redraw and teams submit independently",async()=>{
+  const r=createDealtRoom("123456",Date.now(),undefined,2),[first,second]=r.teams.map(team=>team.id),{root,window}=await ui(r),draft={};
+  for(const role of [first,second])joinRoom(r,role,r.members[role].invite);
+  let role=first;
+  const handlers={invite(){},newGame(){},redraw:render,act(name,data){act(r,role,name,{roundIndex:r.runs[role].stageIndex,...data});render();}};
+  function render(){window.RoomUI.render(root,view(r,role),handlers,draft);}
+  render();
+  const input=()=>root.all().find(e=>e.tagName==="textarea");
+  assert.ok(input());input().value="  кНИГА! ";input().listeners.input();render();
+  assert.equal(input().value,"  кНИГА! ");
+  role=second;render();assert.equal(input().value,"");
+  input().value="Телевизор";input().listeners.input();
+  await root.all().find(e=>e.textContent==="Отправить ответы").click();
+  assert.equal(view(r,second).run.summary.incorrect,1);assert.equal(view(r,second).run.summary.skipped,5);
+  assert.equal(view(r,first).run.cleared,false);
+  role=first;render();assert.equal(input().value,"  кНИГА! ");
+  await root.all().find(e=>e.textContent==="Отправить ответы").click();
+  assert.equal(view(r,first).run.summary.correct,1);assert.equal(view(r,first).run.summary.skipped,5);
+  assert.equal(r.scores[first],100);assert.equal(r.scores[second],0);
+});
+
+test("timed code UI waits for teams, lets host set minutes, then accepts a blank answer",async()=>{
+  const r=createTimedRoom("123456",Date.now(),undefined,2),[a,b]=r.teams.map(t=>t.id),{root,window}=await ui(r),draft={};
+  for(const id of [a,b])joinRoom(r,id,r.members[id].invite);
+  const send=(id,name,data={})=>act(r,id,name,{roundIndex:r.runs[id]?.stageIndex||0,...data});
+  send(a,"finishQuestions",{answers:{}});send(a,"continue");
+  let role="host";
+  const handlers={invite(){},newGame(){},redraw:render,act(name,data){send(role,name,data);render();}};
+  function render(){window.RoomUI.render(root,view(r,role),handlers,draft);}
+  render();assert.equal(root.all().find(e=>e.textContent==="Запустить таймер").disabled,true);
+  send(b,"finishQuestions",{answers:{}});send(b,"continue");render();
+  const minutes=root.all().find(e=>e.id==="timer-minutes-1");minutes.value="3";minutes.listeners.input();
+  await root.all().find(e=>e.textContent==="Запустить таймер").click();
+  assert.equal(r.codeTimers[1].minutes,3);
+  assert.equal(root.all().some(e=>e.textContent?.includes(r.teamFlows[a][1].code)),false);
+  role=a;render();assert.equal(root.all().some(e=>e.textContent==="Отправить код"),false);
+  r.codeTimers[1].endsAt=Date.now()-1;role="host";render();
+  assert.ok(root.all().some(e=>e.textContent?.includes(r.teamFlows[a][1].code)));
+  role=a;render();assert.ok(root.all().some(e=>e.textContent==="Отправить код"));
+  await root.all().find(e=>e.textContent==="Отправить код").click();
+  assert.equal(view(r,a).run.codeOutcome,"incorrect");assert.ok(root.all().some(e=>e.textContent==="К следующему этапу →"));
+  assert.equal(root.all().some(e=>e.tagName==="video"),false);
 });
 
 test("client hint sections never render in lobby, play, submitted stages or finish, even with stale hint data",async()=>{
@@ -268,7 +320,12 @@ test("client hint sections never render in lobby, play, submitted stages or fini
   render();joinRoom(r,role,r.members[role].invite);act(r,"host","start");
   for(const [index,stage] of r.teamFlows[role].entries()) {
     render();
-    if(stage.type==="code")assert.ok(root.all().some(e=>e.textContent==="Получите код у ведущего и введите его."));
+    if(stage.type==="code") {
+      assert.ok(root.all().some(e=>e.textContent==="Получите кодовое слово у ведущего и введите его."));
+      const input=root.all().find(e=>e.className==="flow-code");
+      assert.equal(input.inputMode,"text");assert.equal(input.placeholder,"Слово от ведущего");
+      assert.ok(root.all().some(e=>e.textContent==="Кодовое слово"));
+    }
     act(r,role,stage.type==="questions"?"finishQuestions":"submitCode",{roundIndex:index,...(stage.type==="questions"?{answers:{}}:{code:stage.code})});
     render();act(r,role,"continue",{roundIndex:index});
   }
@@ -357,7 +414,7 @@ test("story context and character labels precede questions, solutions render onl
   const render=()=>window.RoomUI.render(root,view(r,role),handlers,{});
   render();
   assert.ok(root.all().some(e=>e.className==="flow-story"&&e.textContent===r.teamFlows[role][0].story));
-  assert.equal(root.all().filter(e=>e.className==="flow-scene-title").length,1);
+  assert.equal(root.all().filter(e=>e.className==="flow-scene-title").length,4);
   assert.equal(root.all().some(e=>e.textContent==="Разбор загадок"),false);
   act(r,role,"finishQuestions",{roundIndex:0,answers:{}});
   render();
@@ -368,9 +425,11 @@ test("story context and character labels precede questions, solutions render onl
   assert.equal(root.all().some(e=>e.tagName==="textarea"),false);
 });
 
-test("each completed stage places its video between the result and the next-stage button",async()=>{
+test("existing reward-first rooms still place videos after results",async()=>{
   for(const blank of [false,true]) {
     const r=createDealtRoom("123456",Date.now(),undefined,1),role=r.teams[0].id,{root,window}=await ui(r);
+    for(const stage of r.teamFlows[role])delete stage.videoTiming;
+    for(const q of r.teamFlows[role][0].questions)q.videoId=1;
     joinRoom(r,role,r.members[role].invite);
     const handlers={act(){},redraw(){},invite(){},newGame(){}},draft={};
     for(const [index,stage] of r.teamFlows[role].entries()) {
@@ -400,30 +459,52 @@ test("both video layouts use natural height and fit the entire frame instead of 
   assert.doesNotMatch(await read("task-page"),/task.videoAspect/);
 });
 
-test("the entire game shows videos 1 through 8 in order, advances on ended and never loops one clip forever",async()=>{
+test("new rooms show all eight videos after stage completion",async()=>{
   const r=createDealtRoom("123456",Date.now(),undefined,1),role=r.teams[0].id,{root,window}=await ui(r),draft={},seen=[];
   joinRoom(r,role,r.members[role].invite);
   const render=()=>window.RoomUI.render(root,view(r,role),handlers,draft);
   const handlers={act(){},redraw:render,invite(){},newGame(){}};
   for(const [index,stage] of r.teamFlows[role].entries()) {
-    act(r,role,stage.type==="code"?"submitCode":"finishQuestions",{roundIndex:index,...(stage.type==="code"?{code:stage.code}:{answers:{}})});
-    const videoIds=[...new Set([...stage.videoIds,...(stage.questions||[]).map(q=>q.videoId)])];
     render();
-    for(const [position,id] of videoIds.entries()) {
+    assert.equal(root.all().filter(e=>e.tagName==="video").length,0);
+    act(r,role,stage.type==="code"?"submitCode":"finishQuestions",{roundIndex:index,...(stage.type==="code"?{code:stage.code}:{answers:{}})});
+    render();
+    const videoIds=view(r,role).run.stageVideos;
+    for(const id of videoIds) {
+      const title=(window.HALLOWEEN_MEDIA||[]).find(m=>m.id===id)?.title;
+      if(videoIds.length>1)await root.all().find(e=>e.tagName==="button"&&e.textContent===title).click();
       const video=root.all().find(e=>e.tagName==="video");
-      assert.equal(video.src,"quest-"+id+".mp4");assert.equal(video.loop,false);
-      assert.equal(root.all().filter(e=>e.tagName==="video").length,1);seen.push(id);
+      assert.equal(video.src,"quest-"+id+".mp4");assert.equal(video.loop,false);assert.equal(video.muted,false);seen.push(id);
       render();assert.equal(root.all().find(e=>e.tagName==="video"),video);
-      if(index===4)assert.equal(root.all().some(e=>e.textContent==="Завершить игру"),position===videoIds.length-1);
-      video.paused=true;video.listeners.ended();
     }
+    assert.ok(root.all().some(e=>e.textContent===(index===4?"Завершить игру":"К следующему этапу →")));
     act(r,role,"continue",{roundIndex:index});
   }
   assert.deepEqual(seen,[1,2,3,4,5,6,7,8]);
+  assert.deepEqual([...new Set(seen)],[1,2,3,4,5,6,7,8]);
 });
 
-test("opening the last clip early cannot hide the other final clips behind the finish button",async()=>{
+test("legacy preview videos retain playback on polling and only one may play at a time",async()=>{
   const r=createDealtRoom("123456",Date.now(),undefined,1),role=r.teams[0].id,{root,window}=await ui(r),draft={};
+  joinRoom(r,role,r.members[role].invite);
+  for(let index=0;index<4;index++) {
+    const stage=r.teamFlows[role][index];
+    act(r,role,stage.type==="code"?"submitCode":"finishQuestions",{roundIndex:index,...(stage.type==="code"?{code:stage.code}:{answers:{}})});
+    act(r,role,"continue",{roundIndex:index});
+  }
+  r.teamFlows[role][4].videoTiming="before-task";
+  const render=()=>window.RoomUI.render(root,view(r,role),{act(){},redraw:render,invite(){},newGame(){}},draft);
+  render();const videos=root.all().filter(e=>e.tagName==="video");
+  assert.equal(videos.length,4);assert.ok(videos.slice(1).every(v=>v.autoplay===false));
+  await videos[0].play();await videos[2].play();
+  assert.equal(videos[0].paused,true);assert.equal(videos[2].paused,false);
+  render();assert.equal(root.all().filter(e=>e.tagName==="video")[2],videos[2]);assert.equal(videos[2].paused,false);
+  window.FlowUI.stopMedia();assert.ok(videos.every(v=>v.paused));
+});
+
+test("existing reward-first rooms cannot skip unseen final clips",async()=>{
+  const r=createDealtRoom("123456",Date.now(),undefined,1),role=r.teams[0].id,{root,window}=await ui(r),draft={};
+  for(const stage of r.teamFlows[role])delete stage.videoTiming;
   joinRoom(r,role,r.members[role].invite);
   for(const [index,stage] of r.teamFlows[role].entries()) {
     act(r,role,stage.type==="code"?"submitCode":"finishQuestions",{roundIndex:index,...(stage.type==="code"?{code:stage.code}:{answers:{}})});
@@ -549,7 +630,8 @@ test("host can withdraw a slot with confirmation and its paused phone loses all 
 
 test("leaving the game pauses its detached video and discards the media cache",async()=>{
   const r=createDealtRoom("123456",Date.now(),undefined,1),id=r.teams[0].id,{root,window}=await ui(r);
-  joinRoom(r,id,r.members[id].invite);dispatch(r,id,"finishQuestions",{roundIndex:0,answers:{}});
+  joinRoom(r,id,r.members[id].invite);
+  act(r,id,"finishQuestions",{roundIndex:0,answers:{}});
   const render=()=>window.RoomUI.render(root,view(r,id),{act(){},redraw(){},invite(){},newGame(){}},{});
   render();const video=root.all().find(e=>e.tagName==="video");await video.play();
   window.FlowUI.stopMedia();assert.equal(video.paused,true);

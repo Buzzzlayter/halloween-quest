@@ -1,0 +1,13 @@
+{
+	admin off
+	default_sni {$QUEST_PUBLIC_IP}
+}
+
+https://{$QUEST_PUBLIC_IP} {
+	tls {
+		issuer acme https://acme-v02.api.letsencrypt.org/directory {
+			profile shortlived
+		}
+	}
+	reverse_proxy 127.0.0.1:3081
+}

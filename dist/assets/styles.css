@@ -827,6 +827,7 @@ button:focus-visible { outline: 3px solid #ffe3b4; outline-offset: 3px; }
 .flow-resolution { margin: 1rem 0; padding: 1rem; border: 1px solid #765b8a; border-radius: .75rem; }
 .flow-resolution summary { cursor: pointer; font-weight: 700; }
 .flow-scene-title { margin-bottom: .5rem; color: #f2b66d; }
+.flow-discussion { margin: .4rem 0 1.25rem; color: #ddc9f0; line-height: 1.6; }
 
 /* Existing artwork replaces team emoji without changing gameplay or video sizing. */
 .character-art { display: inline-block; width: 44px; height: 44px; flex: 0 0 44px; order: -1; object-fit: contain; border-radius: 10px; vertical-align: middle; }
